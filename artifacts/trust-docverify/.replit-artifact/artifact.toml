@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Trust DocVerify"
+version = "1.0.0"
+id = "artifacts/trust-docverify"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25181
+
+[services.development]
+run = "pnpm --filter @workspace/trust-docverify run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/trust-docverify", "run", "build" ]
+publicDir = "artifacts/trust-docverify/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25181"
+BASE_PATH = "/"

@@ -1,0 +1,8 @@
+node_modules/ 
+artifacts/*/node_modules/ 
+keys/ 
+.env 
+dist/ 
+build/ 
+*.log 
+.DS_Store 
