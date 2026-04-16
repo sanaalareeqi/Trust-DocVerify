@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   FileText, Search, Download, Share2, CheckCircle2, 
-  XCircle, RotateCcw, User, FilterX, Loader2, PenTool
+  XCircle, RotateCcw, User, FilterX, Loader2, PenTool, Link
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -72,6 +72,7 @@ interface Document {
   creatorName?: string;
   currentSignerRole?: string;
   documentHash?: string;
+  blockchainTxUrl?: string;
 }
 
 interface User {
@@ -90,6 +91,7 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [blockchainLoading, setBlockchainLoading] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean; docId: number | null; reason: string }>({
@@ -280,6 +282,60 @@ const handleReturn = async () => {
     });
   }
 };
+
+  // تسجيل الوثيقة على Blockchain
+  const handleRegisterOnChain = async (docId: number) => {
+    setBlockchainLoading(docId);
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`http://localhost:3000/api/documents/${docId}/register-on-chain`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        toast({
+          title: "✅ تم التسجيل على Blockchain",
+          description: (
+            <span>
+              تم تسجيل الوثيقة بنجاح.{" "}
+              <a href={data.txUrl} target="_blank" rel="noopener noreferrer" className="underline text-blue-600">
+                عرض المعاملة
+              </a>
+            </span>
+          ) as any,
+        });
+        await fetchDocuments();
+      } else if (response.status === 409) {
+        toast({
+          title: "ℹ️ مسجّلة مسبقاً",
+          description: (
+            <span>
+              هذه الوثيقة مسجّلة بالفعل على Blockchain.{" "}
+              <a href={data.txUrl} target="_blank" rel="noopener noreferrer" className="underline text-blue-600">
+                عرض المعاملة
+              </a>
+            </span>
+          ) as any,
+        });
+      } else {
+        throw new Error(data.error || "فشل التسجيل على Blockchain");
+      }
+    } catch (err: any) {
+      toast({
+        title: "❌ فشل التسجيل",
+        description: err.message || "حدث خطأ أثناء التسجيل على Blockchain",
+        variant: "destructive"
+      });
+    } finally {
+      setBlockchainLoading(null);
+    }
+  };
 
   const getTypeLabel = (type: string) => {
     const types: Record<string, string> = {
@@ -484,12 +540,13 @@ const handleReturn = async () => {
                       <TableHead className="text-right py-4">الحالة</TableHead>
                       <TableHead className="text-right py-4">الموقع الحالي</TableHead>
                       <TableHead className="text-right py-4">تاريخ الإنشاء</TableHead>
+                      <TableHead className="text-right py-4">الإجراءات</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {outgoingRequests.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-16 text-muted-foreground">
+                        <TableCell colSpan={6} className="text-center py-16 text-muted-foreground">
                           لا توجد طلبات صادرة
                         </TableCell>
                       </TableRow>
@@ -511,6 +568,35 @@ const handleReturn = async () => {
                             </div>
                           </TableCell>
                           <TableCell>{new Date(doc.createdAt).toLocaleDateString("ar-EG")}</TableCell>
+                          <TableCell>
+                            {doc.status === "Verified" && (
+                              doc.blockchainTxUrl ? (
+                                <a
+                                  href={doc.blockchainTxUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 hover:bg-green-100 transition-colors"
+                                >
+                                  <Link className="h-3 w-3" /> مسجّل على Blockchain
+                                </a>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-purple-700 border-purple-200 hover:bg-purple-50 gap-1 text-xs"
+                                  onClick={() => handleRegisterOnChain(doc.id)}
+                                  disabled={blockchainLoading === doc.id}
+                                >
+                                  {blockchainLoading === doc.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Link className="h-3 w-3" />
+                                  )}
+                                  تسجيل في Blockchain
+                                </Button>
+                              )
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))
                     )}

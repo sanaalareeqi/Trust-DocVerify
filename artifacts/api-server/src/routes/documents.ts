@@ -7,6 +7,7 @@ import { sendSignatureInvitation } from '../config/email';
 import { db, users } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { scanFile } from "../services/fileSecurity.service";
+import { storeDocumentHashOnChain } from "../services/blockchain.service";
 
 const router: IRouter = Router();
 
@@ -487,6 +488,53 @@ router.get("/:id/verify-signature", async (req, res) => {
   } catch (err) {
     console.error("Error verifying signature:", err);
     res.status(500).json({ error: "Failed to verify signature" });
+  }
+});
+
+// ✅ تسجيل هاش الوثيقة على Blockchain
+router.post("/:id/register-on-chain", async (req, res) => {
+  try {
+    const docId = parseInt(req.params.id);
+
+    const doc = await storage.getDocument(docId);
+    if (!doc) {
+      return res.status(404).json({ error: "الوثيقة غير موجودة" });
+    }
+
+    if (doc.status !== "Verified") {
+      return res.status(400).json({ error: "يمكن تسجيل الوثائق المكتملة (Verified) فقط على Blockchain" });
+    }
+
+    if (!doc.documentHash) {
+      return res.status(400).json({ error: "لا يوجد هاش للوثيقة" });
+    }
+
+    if (doc.blockchainTxUrl) {
+      return res.status(409).json({ 
+        error: "تم تسجيل هذه الوثيقة مسبقاً على Blockchain",
+        txUrl: doc.blockchainTxUrl
+      });
+    }
+
+    logger.info({ docId }, "بدء تسجيل الوثيقة على Blockchain...");
+
+    const txUrl = await storeDocumentHashOnChain(doc.documentHash);
+
+    const updatedDoc = await storage.updateDocument(docId, {
+      blockchainTxUrl: txUrl,
+    });
+
+    logger.info({ docId, txUrl }, "تم تسجيل الوثيقة على Blockchain بنجاح");
+
+    res.json({ 
+      success: true, 
+      message: "تم تسجيل الوثيقة على Blockchain بنجاح",
+      txUrl,
+      document: updatedDoc
+    });
+  } catch (err: any) {
+    logger.error({ err: err.message }, "فشل تسجيل الوثيقة على Blockchain");
+    res.status(500).json({ error: err.message || "فشل التسجيل على Blockchain" });
   }
 });
 

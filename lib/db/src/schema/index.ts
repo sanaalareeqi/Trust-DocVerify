@@ -27,6 +27,7 @@ export const documents = pgTable("documents", {
   documentHash: text("document_hash"),
   workflow: jsonb("workflow").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
+  blockchainTxUrl: text("blockchain_tx_url"),
 });
 
 export const signatureLogs = pgTable("signature_logs", {
