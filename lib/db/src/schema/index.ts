@@ -28,6 +28,7 @@ export const documents = pgTable("documents", {
   workflow: jsonb("workflow").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   blockchainTxUrl: text("blockchain_tx_url"),
+  blockchainDocId: integer("blockchain_doc_id"),
 });
 
 export const signatureLogs = pgTable("signature_logs", {

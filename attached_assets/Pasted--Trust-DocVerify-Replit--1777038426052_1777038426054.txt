@@ -1,0 +1,52 @@
+نفذ التالي في مشروع Trust DocVerify على Replit :
+**الهدف الرئيسي:** تعديل النظام بحيث يتم تخزين جميع التوقيعات (All Signatures) على Blockchain، وليس فقط بصمة واحدة للوثيقة. كل موقع (شؤون الخريجين، مسجل الكلية، عميد الكلية، إلخ) سيتم تسجيل توقيعه كمعاملة منفصلة على Blockchain مع معلوماته الكاملة.
+**المرحلة 1: حذف البيانات القديمة**
+1. نفذ أوامر SQL التالية في قاعدة البيانات:
+   - DELETE FROM signature_logs;
+   - DELETE FROM notifications;
+   - DELETE FROM documents;
+   - DELETE FROM external_signature_invitations;
+   - ALTER SEQUENCE documents_id_seq RESTART WITH 1;
+**المرحلة 2: تعديل العقد الذكي لتخزين جميع التوقيعات**
+2. عدّل العقد الذكي في ملف deploy-with-compile.js ليصبح قادراً على تخزين كل توقيع على حدة مع المعلومات التالية لكل توقيع:
+   - step (رقم التوقيع في التسلسل)
+   - signerRole (دور الموقع: "شؤون الخريجين"، "مسجل الكلية"، إلخ)
+   - signatureHash (التوقيع المشفر الناتج من ECC)
+   - timestamp (وقت التوقيع)
+   - signerAddress (عنوان محفظة الموقع على Blockchain)
+3. أضف الدوال التالية للعقد الجديد:
+   - createDocument(documentHash) → docId (ينشئ وثيقة جديدة ويعيد رقمها)
+   - addSignature(docId, signerRole, signatureHash) (يضيف توقيعاً جديداً للوثيقة)
+   - completeDocument(docId) (يُعلم اكتمال جميع التوقيعات)
+   - getDocumentHash(docId) (يسترجع بصمة الوثيقة)
+   - getSignaturesCount(docId) (يسترجع عدد التوقيعات)
+   - getSignature(docId, index) (يسترجع توقيعاً محدداً)
+   - getAllSignatures(docId) (يسترجع جميع التوقيعات دفعة واحدة)
+   - isDocumentCompleted(docId) (يتحقق من اكتمال الوثيقة)
+**المرحلة 3: نشر العقد الجديد على Sepolia**
+4. انشر العقد الجديد على شبكة Sepolia Testnet باستخدام Alchemy RPC من متغيرات البيئة.
+5. تأكد من وجود رصيد SepoliaETH كافٍ في المحفظة (0.05 ETH على الأقل).
+6. احصل على عنوان العقد الجديد بعد نجاح النشر.
+**المرحلة 4: تحديث ملفات الخادم**
+7. حدّث ملف .env:
+   - CONTRACT_ADDRESS = العنوان_الجديد
+8. عدّل ملف server/services/blockchain.service.ts ليتوافق مع العقد الجديد:
+   - أضف async function createDocumentOnChain(documentHash): Promise<{docId: number, txUrl: string}>
+   - أضف async function addSignatureToChain(docId: number, signerRole: string, signature: string): Promise<string>
+   - أضف async function completeDocumentOnChain(docId: number): Promise<string>
+   - أضف async function getAllSignaturesFromChain(docId: number): Promise<Array<{step, signerRole, signatureHash, timestamp, signerAddress}>>
+9. عدّل ملف server/routes/documents.ts:
+   - في مسار POST / (إنشاء وثيقة): بعد إنشاء الوثيقة في قاعدة البيانات، استدعِ createDocumentOnChain واحفظ blockchain_doc_id الذي يعيده العقد.
+   - في مسار POST /:id/sign (توقيع): بعد التوقيع باستخدام ECC، استدعِ addSignatureToChain لتخزين التوقيع على Blockchain.
+   - عند اكتمال جميع التوقيعات (currentStep > workflow.length): استدعِ completeDocumentOnChain.
+**المرحلة 5: تنظيف الملفات**
+10. احذف ملف deploy-contract.js (لأنه للعقد القديم).
+**ملاحظات مهمة:**
+- سيتم البدء من الصفر، جميع الوثائق القديمة ستُحذف.
+- كل توقيع سيُخزن كمعاملة منفصلة على Blockchain (زيادة في التكلفة ولكن توثيق كامل).
+- العقد الجديد سيكون مختلفاً تماماً عن العقد القديم، لذلك لا توجد مشكلة توافق.
+**الرجاء تنفيذ هذه التعديلات وإعلامي عند الانتهاء مع عرض:**
+- عنوان العقد الجديد
+- رابط العقد على Etherscan
+- تأكيد أن دوال addSignature تعمل بشكل صحيح
+لا تغير اي شي في التصميم الحالي 

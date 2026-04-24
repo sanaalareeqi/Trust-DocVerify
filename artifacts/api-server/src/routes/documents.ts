@@ -7,7 +7,11 @@ import { sendSignatureInvitation } from '../config/email';
 import { db, users } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { scanFile } from "../services/fileSecurity.service";
-import { storeDocumentHashOnChain } from "../services/blockchain.service";
+import {
+  createDocumentOnChain,
+  addSignatureToChain,
+  completeDocumentOnChain,
+} from "../services/blockchain.service";
 import { addQRCodeToImage, addQRCodeToPDF } from "../services/qr.service";
 import * as fs from 'fs';
 import * as path from 'path';
@@ -381,6 +385,19 @@ router.post("/", async (req, res) => {
       documentHash,
       workflow,
     });
+
+    // ✅ تسجيل الوثيقة على Blockchain بشكل غير متزامن
+    if (documentHash) {
+      setImmediate(async () => {
+        try {
+          const { docId: blockchainDocId, txUrl } = await createDocumentOnChain(documentHash);
+          await storage.updateDocument(doc.id, { blockchainDocId, blockchainTxUrl: txUrl });
+          logger.info({ docId: doc.id, blockchainDocId }, "تم ربط الوثيقة بـ Blockchain");
+        } catch (err: any) {
+          logger.warn({ err: err.message, docId: doc.id }, "فشل تسجيل الوثيقة على Blockchain");
+        }
+      });
+    }
     
     // ✅ إذا كان هناك طرف خارجي، إنشاء دعوة توقيع وإرسال بريد إلكتروني
     if (externalInvitation && externalInvitation.email) {
@@ -503,11 +520,30 @@ router.post("/:id/sign", async (req, res) => {
       currentStep: newStep,
     });
     
-    console.log(`✅ Document ${docId} signed by ${signerRole}: step ${currentStepValue} -> ${newStep}, status: ${newStatus}`);
+    logger.info({ docId, signerRole, newStatus }, `Document signed: step ${currentStepValue} -> ${newStep}`);
+
+    // ✅ تسجيل التوقيع على Blockchain بشكل غير متزامن
+    const blockchainDocId = (doc as any).blockchainDocId;
+    if (blockchainDocId) {
+      setImmediate(async () => {
+        try {
+          await addSignatureToChain(blockchainDocId, signerRole, signature);
+          logger.info({ docId, blockchainDocId, signerRole }, "تم تسجيل التوقيع على Blockchain");
+
+          if (newStatus === "Verified") {
+            const completeTxUrl = await completeDocumentOnChain(blockchainDocId);
+            await storage.updateDocument(docId, { blockchainTxUrl: completeTxUrl });
+            logger.info({ docId, blockchainDocId }, "تم إكمال الوثيقة على Blockchain");
+          }
+        } catch (blockchainErr: any) {
+          logger.warn({ err: blockchainErr.message, docId, signerRole }, "فشل تسجيل التوقيع على Blockchain");
+        }
+      });
+    }
     
     res.json(updatedDoc);
   } catch (err) {
-    console.error("❌ Error signing document:", err);
+    logger.error({ err }, "Error signing document");
     res.status(500).json({ error: "Failed to sign document: " + (err as Error).message });
   }
 });
@@ -729,7 +765,7 @@ router.get("/by-hash/:hash", async (req, res) => {
   }
 });
 
-// ✅ تسجيل هاش الوثيقة على Blockchain
+// ✅ فحص حالة تسجيل الوثيقة على Blockchain / تسجيل يدوي إذا لم يكتمل التلقائي
 router.post("/:id/register-on-chain", async (req, res) => {
   try {
     const docId = parseInt(req.params.id);
@@ -737,6 +773,14 @@ router.post("/:id/register-on-chain", async (req, res) => {
     const doc = await storage.getDocument(docId);
     if (!doc) {
       return res.status(404).json({ error: "الوثيقة غير موجودة" });
+    }
+
+    // إذا كان هناك رابط معاملة بالفعل، إرجاعه
+    if ((doc as any).blockchainTxUrl) {
+      return res.status(409).json({ 
+        error: "تم تسجيل هذه الوثيقة مسبقاً على Blockchain",
+        txUrl: (doc as any).blockchainTxUrl
+      });
     }
 
     if (doc.status !== "Verified") {
@@ -747,22 +791,16 @@ router.post("/:id/register-on-chain", async (req, res) => {
       return res.status(400).json({ error: "لا يوجد هاش للوثيقة" });
     }
 
-    if (doc.blockchainTxUrl) {
-      return res.status(409).json({ 
-        error: "تم تسجيل هذه الوثيقة مسبقاً على Blockchain",
-        txUrl: doc.blockchainTxUrl
-      });
-    }
-
-    logger.info({ docId }, "بدء تسجيل الوثيقة على Blockchain...");
-
-    const txUrl = await storeDocumentHashOnChain(doc.documentHash);
-
+    // تسجيل يدوي في حالة فشل التسجيل التلقائي
+    logger.info({ docId }, "بدء التسجيل اليدوي للوثيقة على Blockchain...");
+    const { docId: blockchainDocId, txUrl } = await createDocumentOnChain(doc.documentHash);
+    
     const updatedDoc = await storage.updateDocument(docId, {
+      blockchainDocId,
       blockchainTxUrl: txUrl,
     });
 
-    logger.info({ docId, txUrl }, "تم تسجيل الوثيقة على Blockchain بنجاح");
+    logger.info({ docId, blockchainDocId, txUrl }, "تم التسجيل اليدوي بنجاح");
 
     res.json({ 
       success: true, 
