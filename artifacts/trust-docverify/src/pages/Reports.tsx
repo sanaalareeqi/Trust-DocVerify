@@ -43,6 +43,17 @@ export default function Reports() {
   const [dateTo, setDateTo] = useState("");
   const { toast } = useToast();
 
+  // ✅ حماية: فقط المستخدمين المسجلين يمكنهم الوصول
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("user");
+    
+    if (!token || !userStr) {
+      window.location.href = "/login";
+      return;
+    }
+  }, []);
+
   // جلب المستخدم الحالي
   useEffect(() => {
     const userStr = localStorage.getItem("user");
@@ -452,7 +463,7 @@ export default function Reports() {
                           <th className="p-4 font-medium">موقعة</th>
                           <th className="p-4 font-medium">مرفوضة</th>
                           <th className="p-4 font-medium">معدل الإنجاز</th>
-                         </tr>
+                        </tr>
                       </thead>
                       <tbody>
                         {userPerformance.map((user, index) => (
@@ -468,8 +479,8 @@ export default function Reports() {
                                   <div className="h-full bg-primary rounded-full" style={{ width: `${user.rate}%` }}></div>
                                 </div>
                               </div>
-                             </td>
-                           </tr>
+                            </td>
+                          </tr>
                         ))}
                       </tbody>
                     </table>

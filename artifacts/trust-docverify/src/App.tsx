@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -14,42 +14,205 @@ import Register from "@/pages/Register";
 import Reports from "@/pages/Reports";
 import ExternalSign from "@/pages/ExternalSign";
 import AdminUsers from "@/pages/AdminUsers";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
+import { ReactNode, useEffect, useState } from "react";
+
+// ✅ مكون حماية المسارات
+function ProtectedRoute({ children, allowedRoles }: { children: ReactNode; allowedRoles?: string[] }) {
+  const [, setLocation] = useLocation();
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("user");
+
+    // التحقق من وجود token
+    if (!token) {
+      setLocation("/login");
+      return;
+    }
+
+    // التحقق من وجود بيانات المستخدم
+    if (!userStr) {
+      localStorage.removeItem("token");
+      setLocation("/login");
+      return;
+    }
+
+    try {
+      const user = JSON.parse(userStr);
+      
+      // التحقق من صلاحيات الدور (إذا تم تحديدها)
+      if (allowedRoles && allowedRoles.length > 0) {
+        if (!allowedRoles.includes(user.role)) {
+          setLocation("/login");
+          return;
+        }
+      }
+      
+      setIsAuthorized(true);
+    } catch (error) {
+      console.error("Error parsing user:", error);
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      setLocation("/login");
+    }
+  }, [setLocation, allowedRoles]);
+
+  if (isAuthorized === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return isAuthorized ? <>{children}</> : null;
+}
+
+// ✅ مكون حماية لوحة التحكم حسب الدور
+function ProtectedRoleDashboard({ role }: { role: string }) {
+  const [, setLocation] = useLocation();
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("user");
+
+    if (!token || !userStr) {
+      setLocation("/login");
+      return;
+    }
+
+    try {
+      const user = JSON.parse(userStr);
+      
+      // خريطة الأدوار الإنجليزية إلى العربية
+      const roleMap: Record<string, string> = {
+        "Graduate-Affairs": "شؤون الخريجين",
+        "College-Registrar": "مسجل الكلية",
+        "Dean": "عميد الكلية",
+        "General-Registrar": "المسجل العام",
+        "University-President": "رئيس الجامعة",
+        "Employment-Officer": "مسؤول التوظيف",
+        "Secretary-General": "الأمين العام",
+        "Board-Chairman": "رئيس مجلس الأمناء",
+        "Requester": "مقدم طلب الشراء",
+        "Financial-Manager": "المدير المالي",
+        "Auditor": "المراجع",
+        "Accounts": "الحسابات"
+      };
+      
+      const expectedRole = roleMap[role];
+      
+      // التحقق أن المستخدم له نفس الدور المطلوب أو هو أدمن
+      if (user.role !== expectedRole && user.role !== "مدير النظام") {
+        setLocation("/login");
+        return;
+      }
+      
+      setIsAuthorized(true);
+    } catch (error) {
+      setLocation("/login");
+    }
+  }, [role, setLocation]);
+
+  if (isAuthorized === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return isAuthorized ? <RoleDashboard params={{ role }} /> : null;
+}
 
 function Router() {
   return (
     <Switch>
-      {/* الصفحات العامة */}
+      {/* الصفحات العامة (بدون حماية) */}
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/verify" component={Verify} />
+      <Route path="/verify/:id" component={Verify} />
       
-      {/* صفحة التوقيع الخارجي */}
+      {/* ✅ صفحات استعادة كلمة المرور (بدون حماية) */}
+      <Route path="/forgot-password" component={ForgotPassword} />
+      <Route path="/reset-password" component={ResetPassword} />
+      
+      {/* صفحة التوقيع الخارجي (بدون حماية) */}
       <Route path="/external-sign/:token" component={ExternalSign} />
       
-      {/* ✅ صفحة إدارة المستخدمين (للأدمن فقط) */}
-      <Route path="/admin" component={AdminUsers} />
+      {/* ✅ الصفحات المحمية (تتطلب تسجيل دخول) */}
       
-      {/* لوحة التحكم العامة (للمسؤول) */}
-      <Route path="/dashboard" component={Dashboard} />
+      {/* صفحة إدارة المستخدمين (للأدمن فقط) */}
+      <Route path="/admin">
+        <ProtectedRoute allowedRoles={["مدير النظام"]}>
+          <AdminUsers />
+        </ProtectedRoute>
+      </Route>
       
-      {/* لوحات التحكم حسب الدور */}
-      <Route path="/dashboard/graduate-affairs" component={() => <RoleDashboard params={{ role: "Graduate-Affairs" }} />} />
-      <Route path="/dashboard/college-registrar" component={() => <RoleDashboard params={{ role: "College-Registrar" }} />} />
-      <Route path="/dashboard/dean" component={() => <RoleDashboard params={{ role: "Dean" }} />} />
-      <Route path="/dashboard/general-registrar" component={() => <RoleDashboard params={{ role: "General-Registrar" }} />} />
-      <Route path="/dashboard/president" component={() => <RoleDashboard params={{ role: "University-President" }} />} />
-      <Route path="/dashboard/employment" component={() => <RoleDashboard params={{ role: "Employment-Officer" }} />} />
-      <Route path="/dashboard/secretary" component={() => <RoleDashboard params={{ role: "Secretary-General" }} />} />
-      <Route path="/dashboard/board-chairman" component={() => <RoleDashboard params={{ role: "Board-Chairman" }} />} />
-      <Route path="/dashboard/requester" component={() => <RoleDashboard params={{ role: "Requester" }} />} />
-      <Route path="/dashboard/finance" component={() => <RoleDashboard params={{ role: "Financial-Manager" }} />} />
-      <Route path="/dashboard/auditor" component={() => <RoleDashboard params={{ role: "Auditor" }} />} />
-      <Route path="/dashboard/accounts" component={() => <RoleDashboard params={{ role: "Accounts" }} />} />
+      {/* صفحة إنشاء وثيقة جديدة (للأدمن فقط) */}
+      <Route path="/sign">
+        <ProtectedRoute allowedRoles={["مدير النظام"]}>
+          <SignDocument />
+        </ProtectedRoute>
+      </Route>
       
-      {/* الصفحات الأخرى */}
-      <Route path="/sign" component={SignDocument} />
-      <Route path="/reports" component={Reports} />
+      {/* صفحة التقارير (لجميع المستخدمين المسجلين) */}
+      <Route path="/reports">
+        <ProtectedRoute>
+          <Reports />
+        </ProtectedRoute>
+      </Route>
+      
+      {/* لوحة التحكم العامة */}
+      <Route path="/dashboard">
+        <ProtectedRoute>
+          <Dashboard />
+        </ProtectedRoute>
+      </Route>
+      
+      {/* لوحات التحكم حسب الدور (مع حماية الدور) */}
+      <Route path="/dashboard/graduate-affairs">
+        <ProtectedRoleDashboard role="Graduate-Affairs" />
+      </Route>
+      <Route path="/dashboard/college-registrar">
+        <ProtectedRoleDashboard role="College-Registrar" />
+      </Route>
+      <Route path="/dashboard/dean">
+        <ProtectedRoleDashboard role="Dean" />
+      </Route>
+      <Route path="/dashboard/general-registrar">
+        <ProtectedRoleDashboard role="General-Registrar" />
+      </Route>
+      <Route path="/dashboard/president">
+        <ProtectedRoleDashboard role="University-President" />
+      </Route>
+      <Route path="/dashboard/employment">
+        <ProtectedRoleDashboard role="Employment-Officer" />
+      </Route>
+      <Route path="/dashboard/secretary">
+        <ProtectedRoleDashboard role="Secretary-General" />
+      </Route>
+      <Route path="/dashboard/board-chairman">
+        <ProtectedRoleDashboard role="Board-Chairman" />
+      </Route>
+      <Route path="/dashboard/requester">
+        <ProtectedRoleDashboard role="Requester" />
+      </Route>
+      <Route path="/dashboard/finance">
+        <ProtectedRoleDashboard role="Financial-Manager" />
+      </Route>
+      <Route path="/dashboard/auditor">
+        <ProtectedRoleDashboard role="Auditor" />
+      </Route>
+      <Route path="/dashboard/accounts">
+        <ProtectedRoleDashboard role="Accounts" />
+      </Route>
       
       {/* صفحة 404 */}
       <Route component={NotFound} />

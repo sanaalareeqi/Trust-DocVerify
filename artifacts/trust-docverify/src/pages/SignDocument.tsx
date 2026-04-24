@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { FileText, PenTool, CheckCircle, Shield, Upload, X, ArrowUp, ArrowDown, User, FileType, Mail, Loader2, AlertCircle } from "lucide-react";
+import { FileText, PenTool, CheckCircle, Shield, Upload, X, ArrowUp, ArrowDown, User, FileType, Mail, Loader2, Plus, Trash2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -41,22 +41,6 @@ interface User {
   role: string;
 }
 
-// ✅ صلاحيات إنشاء الوثائق
-const CREATE_PERMISSIONS: Record<string, string[]> = {
-  "شؤون الخريجين": ["certificate"],
-  "مسؤول التوظيف": ["contract_employment"],
-  "الأمين العام": ["contract_purchase"],
-  "رئيس الجامعة": ["contract_partnership"],
-  "مقدم طلب الشراء": ["invoice"],
-};
-
-// ✅ صلاحيات إنشاء العقود حسب النوع
-const CONTRACT_CREATE_PERMISSIONS: Record<string, string[]> = {
-  "employment": ["مسؤول التوظيف"],
-  "purchase": ["الأمين العام"],
-  "partnership": ["رئيس الجامعة"],
-};
-
 // تعريف مسارات التوقيع بالأدوار فقط (بدون أسماء)
 const DEFAULT_ROLES: Record<DocumentType, string[]> = {
   certificate: ["شؤون الخريجين", "مسجل الكلية", "عميد الكلية", "المسجل العام", "رئيس الجامعة"],
@@ -89,7 +73,7 @@ const roleToPath: Record<string, string> = {
 export default function SignDocument() {
   const [docType, setDocType] = useState<DocumentType>("certificate");
   const [contractType, setContractType] = useState<ContractType>("employment");
-  const [availableRoles, setAvailableRoles] = useState<string[]>([]);
+  const [defaultRoles, setDefaultRoles] = useState<string[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -98,7 +82,11 @@ export default function SignDocument() {
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [documentHash, setDocumentHash] = useState<string>("");
   
-  // حقول الطرف الخارجي
+  // حقول إضافة مستخدم جديد
+  const [showAddUserDialog, setShowAddUserDialog] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  
+  // حقول الطرف الخارجي (للعقود فقط)
   const [externalEmail, setExternalEmail] = useState("");
   const [externalName, setExternalName] = useState("");
   const [externalOrganization, setExternalOrganization] = useState("");
@@ -106,37 +94,26 @@ export default function SignDocument() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
-  // ✅ التحقق من صلاحية المستخدم الحالي
-  const userStr = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
-  let currentUserRole = "";
-  let currentUserId = 0;
-  if (userStr) {
-    const user = JSON.parse(userStr);
-    currentUserRole = user.role;
-    currentUserId = user.id;
-  }
-
-  // ✅ دالة التحقق من صلاحية إنشاء الوثيقة
-  const canCreateDocument = (type: DocumentType, contract?: ContractType): boolean => {
-    if (type === "certificate") {
-      return CREATE_PERMISSIONS[currentUserRole]?.includes("certificate") || false;
+  // ✅ حماية: فقط مدير النظام يمكنه الوصول
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("user");
+    
+    if (!token || !userStr) {
+      window.location.href = "/login";
+      return;
     }
-    if (type === "contract" && contract) {
-      const allowedRoles = CONTRACT_CREATE_PERMISSIONS[contract] || [];
-      return allowedRoles.includes(currentUserRole);
+    
+    try {
+      const user = JSON.parse(userStr);
+      if (user.role !== "مدير النظام") {
+        window.location.href = "/dashboard";
+        return;
+      }
+    } catch (error) {
+      window.location.href = "/login";
     }
-    if (type === "invoice") {
-      return CREATE_PERMISSIONS[currentUserRole]?.includes("invoice") || false;
-    }
-    return false;
-  };
-
-  // ✅ التحقق من أن المستخدم يمكنه إنشاء نوع معين من العقود
-  const getAvailableContractTypes = (): ContractType[] => {
-    if (docType !== "contract") return [];
-    const types: ContractType[] = ["employment", "purchase", "partnership"];
-    return types.filter(type => canCreateDocument("contract", type));
-  };
+  }, []);
 
   // جلب المستخدمين من قاعدة البيانات
   useEffect(() => {
@@ -145,9 +122,7 @@ export default function SignDocument() {
       try {
         const token = localStorage.getItem("token");
         const response = await fetch("http://localhost:3000/api/documents/users", {
-          headers: {
-            "Authorization": `Bearer ${token}`
-          }
+          headers: { "Authorization": `Bearer ${token}` }
         });
         if (response.ok) {
           const data = await response.json();
@@ -164,7 +139,7 @@ export default function SignDocument() {
     fetchUsers();
   }, []);
 
-  // تحديث الأدوار المتاحة حسب نوع الوثيقة
+  // تحديث الأدوار حسب نوع الوثيقة
   useEffect(() => {
     let roles: string[] = [];
     if (docType === "contract") {
@@ -172,31 +147,64 @@ export default function SignDocument() {
     } else {
       roles = DEFAULT_ROLES[docType];
     }
-    setAvailableRoles(roles);
+    setDefaultRoles(roles);
     setSelectedRoles(roles);
     
+    // إعادة تعيين حقول الطرف الخارجي
     setExternalEmail("");
     setExternalName("");
     setExternalOrganization("");
   }, [docType, contractType]);
 
-  // الحصول على اسم المستخدم الحقيقي من قاعدة البيانات حسب الدور
+  // إضافة مستخدم جديد
+  const addUserToWorkflow = () => {
+    if (!selectedUserId) {
+      toast({ title: "خطأ", description: "الرجاء اختيار مستخدم", variant: "destructive" });
+      return;
+    }
+    
+    const user = users.find(u => u.id === selectedUserId);
+    if (!user) return;
+    
+    // التحقق من عدم وجود الدور مسبقاً
+    if (selectedRoles.includes(user.role)) {
+      toast({ title: "تنبيه", description: `الدور ${user.role} موجود بالفعل`, variant: "destructive" });
+      return;
+    }
+    
+    // إضافة الدور الجديد
+    setSelectedRoles([...selectedRoles, user.role]);
+    setSelectedUserId(null);
+    setShowAddUserDialog(false);
+    toast({ title: "✅ تم الإضافة", description: `تم إضافة ${user.name} (${user.role}) إلى مسار التوقيع` });
+  };
+
+  // حذف دور من القائمة
+  const removeRole = (roleToRemove: string) => {
+    setSelectedRoles(selectedRoles.filter(r => r !== roleToRemove));
+    toast({ title: "تم الحذف", description: `تم إزالة ${roleToRemove} من مسار التوقيع` });
+  };
+
+  // التحقق مما إذا كان الدور من الأدوار الافتراضية
+  const isDefaultRole = (role: string): boolean => {
+    return defaultRoles.includes(role);
+  };
+
+  // الحصول على اسم المستخدم
   const getUserNameByRole = (role: string): string => {
     if (role === "ممثل جهة خارجية") return "جهة خارجية (توقيع عبر رابط)";
     const user = users.find(u => u.role === role);
     return user ? user.name : role;
   };
 
-  // الحصول على معرف المستخدم حسب الدور
   const getUserIdByRole = (role: string): number | undefined => {
     const user = users.find(u => u.role === role);
     return user?.id;
   };
 
-  // بناء قائمة الموقعين مع الأسماء الحقيقية
   const buildSignatories = (): Signatory[] => {
     return selectedRoles.map((role, index) => ({
-      id: `${docType}-${index}`,
+      id: `${docType}-${index}-${role}`,
       role: role,
       name: getUserNameByRole(role),
       isExternal: role === "ممثل جهة خارجية",
@@ -221,7 +229,7 @@ export default function SignDocument() {
     setSelectedRoles(newRoles);
   };
 
-  // حساب Hash الملف عند الرفع
+  // حساب Hash الملف
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -239,144 +247,126 @@ export default function SignDocument() {
     reader.readAsArrayBuffer(file);
   };
 
-  // التحقق من صحة بيانات الطرف الخارجي
   const validateExternalData = (): boolean => {
-    if (selectedRoles.includes("ممثل جهة خارجية")) {
+    if (docType === "contract" && selectedRoles.includes("ممثل جهة خارجية")) {
       if (!externalEmail) {
-        toast({
-          title: "خطأ",
-          description: "الرجاء إدخال البريد الإلكتروني للطرف الخارجي",
-          variant: "destructive",
-        });
+        toast({ title: "خطأ", description: "الرجاء إدخال البريد الإلكتروني للطرف الخارجي", variant: "destructive" });
         return false;
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(externalEmail)) {
-        toast({
-          title: "خطأ",
-          description: "البريد الإلكتروني غير صحيح",
-          variant: "destructive",
-        });
+        toast({ title: "خطأ", description: "البريد الإلكتروني غير صحيح", variant: "destructive" });
         return false;
       }
     }
     return true;
   };
 
-  const handleConfirmSubmit = async () => {
-    if (!uploadedFile) return;
-    if (!validateExternalData()) return;
-    
-    setIsUploading(true);
-    setShowConfirm(false);
+const handleConfirmSubmit = async () => {
+  if (!uploadedFile) return;
+  if (!validateExternalData()) return;
+  
+  setIsUploading(true);
+  setShowConfirm(false);
 
-    try {
-      const userStr = localStorage.getItem("user");
-      if (!userStr) {
-        throw new Error("الرجاء تسجيل الدخول أولاً");
-      }
-      const user = JSON.parse(userStr);
-      
-      let documentType = "";
-      if (docType === "certificate") documentType = "certificate";
-      else if (docType === "contract") documentType = "contract";
-      else if (docType === "invoice") documentType = "invoice";
-      
-      const signatories = buildSignatories();
-      const workflow = signatories.map((sig, index) => ({
-        step: index + 1,
-        role: sig.role,
-        name: sig.name,
-        userId: sig.userId,
-        isExternal: sig.isExternal || false
-      }));
-      
-      const hasExternalSigner = selectedRoles.includes("ممثل جهة خارجية");
-      const requestBody: any = {
-        title: uploadedFile.name,
-        type: documentType,
-        creatorId: user.id,
-        fileUrl: "temp.pdf",
-        documentHash: documentHash,
-        workflow: workflow,
-        currentStep: 1
+  try {
+    // ✅ استخدام FileReader بدلاً من arrayBuffer + spread operator (لحل مشكلة Maximum call stack)
+    const fileUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(uploadedFile);
+    });
+    
+    const userStr = localStorage.getItem("user");
+    if (!userStr) throw new Error("الرجاء تسجيل الدخول أولاً");
+    const user = JSON.parse(userStr);
+    
+    let documentType = "";
+    if (docType === "certificate") documentType = "certificate";
+    else if (docType === "contract") documentType = "contract";
+    else if (docType === "invoice") documentType = "invoice";
+    
+    const signatories = buildSignatories();
+    const workflow = signatories.map((sig, index) => ({
+      step: index + 1,
+      role: sig.role,
+      name: sig.name,
+      userId: sig.userId,
+      isExternal: sig.isExternal || false
+    }));
+    
+    const hasExternalSigner = docType === "contract" && selectedRoles.includes("ممثل جهة خارجية");
+    const requestBody: any = {
+      title: uploadedFile.name,
+      type: documentType,
+      creatorId: user.id,
+      fileUrl: fileUrl,
+      documentHash: documentHash,
+      workflow: workflow,
+      currentStep: 1
+    };
+    
+    if (hasExternalSigner) {
+      requestBody.externalInvitation = {
+        email: externalEmail,
+        name: externalName,
+        organization: externalOrganization
       };
-      
-      if (hasExternalSigner) {
-        requestBody.externalInvitation = {
-          email: externalEmail,
-          name: externalName,
-          organization: externalOrganization
-        };
-      }
-      
-      const response = await fetch("http://localhost:3000/api/documents", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("token")}`
-        },
-        body: JSON.stringify(requestBody)
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "فشل في حفظ الوثيقة");
-      }
-      
-      toast({
-        title: "تم رفع الوثيقة بنجاح",
-        description: hasExternalSigner 
-          ? `تم إرسال رابط التوقيع إلى ${externalEmail}`
-          : `تم حفظ ${uploadedFile.name} وبدء مسار التوقيع`,
-      });
-      
-      setUploadedFile(null);
-      setDocumentHash("");
-      setExternalEmail("");
-      setExternalName("");
-      setExternalOrganization("");
-      
-      // التوجيه إلى صفحة المستخدم المناسبة حسب دوره
-      setTimeout(() => {
-        const currentUserStr = localStorage.getItem("user");
-        if (currentUserStr) {
-          const currentUser = JSON.parse(currentUserStr);
-          const path = roleToPath[currentUser.role] || "dashboard";
-          window.location.href = `/dashboard/${path}`;
-        } else {
-          window.location.href = "/dashboard";
-        }
-      }, 2000);
-      
-    } catch (error: any) {
-      console.error("Error:", error);
-      toast({
-        title: "خطأ",
-        description: error.message || "حدث خطأ أثناء رفع الوثيقة",
-        variant: "destructive",
-      });
-    } finally {
-      setIsUploading(false);
     }
-  };
+    
+    const response = await fetch("http://localhost:3000/api/documents", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem("token")}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "فشل في حفظ الوثيقة");
+    }
+    
+    toast({
+      title: "تم رفع الوثيقة بنجاح",
+      description: hasExternalSigner 
+        ? `تم إرسال رابط التوقيع إلى ${externalEmail}`
+        : `تم حفظ ${uploadedFile.name} وبدء مسار التوقيع`,
+    });
+    
+    // ✅ إرسال حدث لتحديث القوائم
+    window.dispatchEvent(new CustomEvent("documents-updated"));
+    
+    setUploadedFile(null);
+    setDocumentHash("");
+    setExternalEmail("");
+    setExternalName("");
+    setExternalOrganization("");
+    setSelectedRoles([]);
+    
+    // ✅ إعادة تحميل الصفحة بعد 1.5 ثانية
+    setTimeout(() => {
+      window.location.reload();
+    }, 1500);
+    
+  } catch (error: any) {
+    console.error("Error:", error);
+    toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء رفع الوثيقة", variant: "destructive" });
+  } finally {
+    setIsUploading(false);
+  }
+};
 
   const handleSubmit = () => {
     if (!uploadedFile) {
-      toast({
-        title: "خطأ",
-        description: "يرجى تحميل الوثيقة أولاً",
-        variant: "destructive",
-      });
+      toast({ title: "خطأ", description: "يرجى تحميل الوثيقة أولاً", variant: "destructive" });
       return;
     }
     
     if (selectedRoles.length === 0) {
-      toast({
-        title: "خطأ",
-        description: "يرجى تحديد موقع واحد على الأقل",
-        variant: "destructive",
-      });
+      toast({ title: "خطأ", description: "يرجى تحديد موقع واحد على الأقل", variant: "destructive" });
       return;
     }
 
@@ -384,29 +374,13 @@ export default function SignDocument() {
   };
 
   const signatories = buildSignatories();
-  const hasExternalSigner = selectedRoles.includes("ممثل جهة خارجية");
-  const availableContractTypes = getAvailableContractTypes();
-  const hasAnyPermission = canCreateDocument("certificate") || 
-                           canCreateDocument("contract", "employment") || 
-                           canCreateDocument("contract", "purchase") || 
-                           canCreateDocument("contract", "partnership") || 
-                           canCreateDocument("invoice");
-
-  // ✅ إذا لم يكن للمستخدم صلاحية إنشاء أي وثيقة
-  if (!hasAnyPermission) {
-    return (
-      <div className="min-h-screen bg-muted/20 flex items-center justify-center">
-        <Card className="max-w-md">
-          <CardContent className="p-8 text-center">
-            <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-            <h2 className="text-xl font-bold">غير مصرح</h2>
-            <p className="text-muted-foreground">ليس لديك صلاحية لإنشاء وثائق جديدة.</p>
-            <Button className="mt-4" onClick={() => window.location.href = "/dashboard"}>العودة للوحة التحكم</Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const hasExternalSigner = docType === "contract" && selectedRoles.includes("ممثل جهة خارجية");
+  
+  // دمج الأدوار الافتراضية والأدوار المضافة للعرض
+  const allRolesToDisplay = [...new Set([...defaultRoles, ...selectedRoles])];
+  
+  // المستخدمين المتاحين للإضافة
+  const availableUsers = users.filter(u => !selectedRoles.includes(u.role) && u.role !== "مدير النظام" && u.role !== "ممثل جهة خارجية");
 
   return (
     <div className="min-h-screen bg-muted/20 font-sans pb-20">
@@ -437,21 +411,13 @@ export default function SignDocument() {
                     <SelectValue placeholder="اختر نوع الوثيقة" />
                   </SelectTrigger>
                   <SelectContent>
-                    {canCreateDocument("certificate") && (
-                      <SelectItem value="certificate">شهادة تخرج</SelectItem>
-                    )}
-                    {(canCreateDocument("contract", "employment") || 
-                      canCreateDocument("contract", "purchase") || 
-                      canCreateDocument("contract", "partnership")) && (
-                      <SelectItem value="contract">عقد / اتفاقية</SelectItem>
-                    )}
-                    {canCreateDocument("invoice") && (
-                      <SelectItem value="invoice">فاتورة مالية</SelectItem>
-                    )}
+                    <SelectItem value="certificate">شهادة تخرج</SelectItem>
+                    <SelectItem value="contract">عقد / اتفاقية</SelectItem>
+                    <SelectItem value="invoice">فاتورة مالية</SelectItem>
                   </SelectContent>
                 </Select>
 
-                {docType === "contract" && availableContractTypes.length > 0 && (
+                {docType === "contract" && (
                   <motion.div 
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -463,15 +429,9 @@ export default function SignDocument() {
                         <SelectValue placeholder="اختر نوع العقد" />
                       </SelectTrigger>
                       <SelectContent>
-                        {availableContractTypes.includes("employment") && (
-                          <SelectItem value="employment">عقد توظيف</SelectItem>
-                        )}
-                        {availableContractTypes.includes("purchase") && (
-                          <SelectItem value="purchase">عقد شراء</SelectItem>
-                        )}
-                        {availableContractTypes.includes("partnership") && (
-                          <SelectItem value="partnership">عقد شراكة</SelectItem>
-                        )}
+                        <SelectItem value="employment">عقد توظيف</SelectItem>
+                        <SelectItem value="purchase">عقد شراء</SelectItem>
+                        <SelectItem value="partnership">عقد شراكة</SelectItem>
                       </SelectContent>
                     </Select>
                   </motion.div>
@@ -495,39 +455,103 @@ export default function SignDocument() {
                   </div>
                 ) : (
                   <div className="grid gap-3">
-                    {availableRoles.map((role) => (
-                      <div 
-                        key={role} 
-                        className={`flex flex-row-reverse items-center justify-between p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                          selectedRoles.includes(role) 
-                          ? "border-primary bg-primary/5" 
-                          : "border-muted bg-background hover:border-primary/30"
-                        }`}
-                        onClick={() => toggleRole(role)}
-                      >
-                        <div className="flex flex-row-reverse items-center gap-3">
-                          <Checkbox 
-                            checked={selectedRoles.includes(role)} 
-                            onCheckedChange={() => toggleRole(role)}
-                          />
-                          <div className="text-right">
-                            <div className="flex items-center gap-2 justify-end">
-                              {role === "ممثل جهة خارجية" && (
-                                <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-600 border-blue-200">توقيع خارجي</Badge>
-                              )}
-                              <p className="font-bold text-sm">{role}</p>
+                    {/* عرض جميع الأدوار (الافتراضية + المضافة) */}
+                    {allRolesToDisplay.map((role) => {
+                      const isSelected = selectedRoles.includes(role);
+                      const isDefault = defaultRoles.includes(role);
+                      
+                      return (
+                        <div 
+                          key={role} 
+                          className={`flex flex-row-reverse items-center justify-between p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                            isSelected 
+                            ? "border-primary bg-primary/5" 
+                            : "border-muted bg-background hover:border-primary/30"
+                          }`}
+                          onClick={() => toggleRole(role)}
+                        >
+                          <div className="flex flex-row-reverse items-center gap-3">
+                            <Checkbox 
+                              checked={isSelected} 
+                              onCheckedChange={() => toggleRole(role)}
+                            />
+                            <div className="text-right">
+                              <div className="flex items-center gap-2 justify-end">
+                                {role === "ممثل جهة خارجية" && (
+                                  <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-600 border-blue-200">توقيع خارجي</Badge>
+                                )}
+                                <p className="font-bold text-sm">{role}</p>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">
+                                {getUserNameByRole(role)}
+                              </p>
                             </div>
-                            <p className="text-[10px] text-muted-foreground">
-                              {getUserNameByRole(role)}
-                            </p>
                           </div>
+                          
+                          {/* زر حذف - يظهر فقط للأدوار المضافة (غير الافتراضية) */}
+                          {isSelected && !isDefault && role !== "ممثل جهة خارجية" && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                removeRole(role); 
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
+                    
+                    {/* زر إضافة مستخدم */}
+                    <div className="mt-2 pt-2 border-t">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="w-full gap-1"
+                        onClick={() => setShowAddUserDialog(true)}
+                        disabled={availableUsers.length === 0}
+                      >
+                        <Plus className="h-4 w-4" />
+                        إضافة مستخدم
+                      </Button>
+                    </div>
                   </div>
                 )}
                 
-                {hasExternalSigner && (
+                {/* Dialog لإضافة مستخدم */}
+                {showAddUserDialog && (
+                  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddUserDialog(false)}>
+                    <div className="bg-background rounded-lg p-6 w-[400px] max-w-[90%]" onClick={(e) => e.stopPropagation()}>
+                      <h3 className="text-lg font-bold mb-4 text-center">إضافة مستخدم إلى مسار التوقيع</h3>
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                        {availableUsers.map(user => (
+                          <div 
+                            key={user.id}
+                            className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedUserId === user.id ? "border-primary bg-primary/5" : "border-muted hover:border-primary/30"}`}
+                            onClick={() => setSelectedUserId(user.id)}
+                          >
+                            <p className="font-bold">{user.name}</p>
+                            <p className="text-xs text-muted-foreground">{user.role}</p>
+                          </div>
+                        ))}
+                        {availableUsers.length === 0 && (
+                          <p className="text-center text-muted-foreground py-4">لا يوجد مستخدمين متاحين للإضافة</p>
+                        )}
+                      </div>
+                      <div className="flex gap-3 mt-4">
+                        <Button onClick={addUserToWorkflow} className="flex-1">إضافة</Button>
+                        <Button variant="outline" onClick={() => setShowAddUserDialog(false)}>إلغاء</Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* الطرف الخارجي - للعقود فقط */}
+                {docType === "contract" && hasExternalSigner && (
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -575,7 +599,7 @@ export default function SignDocument() {
               <CardContent>
                 {selectedRoles.length === 0 ? (
                   <div className="py-10 text-center border-2 border-dashed rounded-2xl text-muted-foreground">
-                    يرجى اختيار موقع واحد على الأقل من القائمة الجانبية
+                    يرجى اختيار موقع واحد على الأقل
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -602,7 +626,7 @@ export default function SignDocument() {
                             variant="ghost" 
                             size="icon" 
                             className="h-8 w-8"
-                            onClick={(e) => { e.stopPropagation(); moveRole(index, 'up'); }}
+                            onClick={() => moveRole(index, 'up')}
                             disabled={index === 0}
                           >
                             <ArrowUp className="h-4 w-4" />
@@ -611,7 +635,7 @@ export default function SignDocument() {
                             variant="ghost" 
                             size="icon" 
                             className="h-8 w-8"
-                            onClick={(e) => { e.stopPropagation(); moveRole(index, 'down'); }}
+                            onClick={() => moveRole(index, 'down')}
                             disabled={index === signatories.length - 1}
                           >
                             <ArrowDown className="h-4 w-4" />
@@ -659,9 +683,9 @@ export default function SignDocument() {
                       </div>
                       <div className="space-y-2">
                         <p className="font-bold">اسحب الملف هنا أو انقر للاختيار</p>
-                        <p className="text-xs text-muted-foreground">PDF, DOCX, PNG (بحد أقصى 10MB)</p>
+                        <p className="text-xs text-muted-foreground">PDF, PNG, JPG (بحد أقصى 10MB)</p>
                       </div>
-                      <input type="file" className="hidden" id="file-upload" onChange={handleFileUpload} />
+                      <input type="file" className="hidden" id="file-upload" onChange={handleFileUpload} accept=".pdf,.png,.jpg,.jpeg" />
                       <Button asChild variant="outline" className="mt-2 border-primary text-primary hover:bg-primary/5">
                         <label htmlFor="file-upload" className="cursor-pointer">اختيار ملف</label>
                       </Button>

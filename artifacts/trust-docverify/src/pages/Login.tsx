@@ -168,12 +168,15 @@ export default function Login() {
             </form>
           </CardContent>
           <CardFooter className="flex justify-center border-t p-4 bg-slate-50/50 rounded-b-xl">
-            <p className="text-sm text-slate-600">
+            {/* <p className="text-sm text-slate-600">
               ليس لديك حساب؟ {" "}
               <Link href="/register" className="text-primary font-bold hover:underline">
                 أنشئ حساباً جديداً
               </Link>
-            </p>
+            </p> */}
+            <Link href="/forgot-password" className="text-sm text-primary hover:underline text-center block mt-4">
+  نسيت كلمة المرور؟
+</Link>
           </CardFooter>
         </Card>
       </div>

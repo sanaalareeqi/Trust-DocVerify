@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   FileText, Search, Download, Share2, CheckCircle2, 
-  XCircle, RotateCcw, User, FilterX, Loader2, PenTool, Link
+  XCircle, RotateCcw, User, FilterX, Loader2, PenTool, Link, Eye, Shield
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,9 +19,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
+import QRCodeModal from "@/components/ui/QRCodeModal";
+import { QrCode } from "lucide-react";
 
 // Roles mapping for Arabic display (English to Arabic)
 const ROLE_LABELS: Record<string, string> = {
@@ -73,6 +75,7 @@ interface Document {
   currentSignerRole?: string;
   documentHash?: string;
   blockchainTxUrl?: string;
+  fileUrl?: string;
 }
 
 interface User {
@@ -103,8 +106,57 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     isOpen: false,
     doc: null,
   });
+  
+  // ✅ متغيرات جديدة لعملية التوقيع داخل نافذة المعاينة
+  const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
+  const [showConfirmSign, setShowConfirmSign] = useState(false);
+  const [selectedDocForSign, setSelectedDocForSign] = useState<Document | null>(null);
+  
+  // ✅ حماية إضافية: التحقق من أن المستخدم له صلاحية الوصول لهذه الصفحة
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("user");
+    
+    if (!token || !userStr) {
+      window.location.href = "/login";
+      return;
+    }
+    
+    try {
+      const user = JSON.parse(userStr);
+      
+      // خريطة الأدوار الإنجليزية إلى العربية
+      const roleMap: Record<string, string> = {
+        "Graduate-Affairs": "شؤون الخريجين",
+        "College-Registrar": "مسجل الكلية",
+        "Dean": "عميد الكلية",
+        "General-Registrar": "المسجل العام",
+        "University-President": "رئيس الجامعة",
+        "Employment-Officer": "مسؤول التوظيف",
+        "Secretary-General": "الأمين العام",
+        "Board-Chairman": "رئيس مجلس الأمناء",
+        "Requester": "مقدم طلب الشراء",
+        "Financial-Manager": "المدير المالي",
+        "Auditor": "المراجع",
+        "Accounts": "الحسابات"
+      };
+      
+      const expectedRole = roleMap[currentRole];
+      
+      // إذا كان المستخدم ليس له هذا الدور وليس أدمن → يوجه للصفحة الرئيسية
+      if (user.role !== expectedRole && user.role !== "مدير النظام") {
+        toast({ title: "غير مصرح", description: "ليس لديك صلاحية الوصول لهذه الصفحة", variant: "destructive" });
+        window.location.href = "/dashboard";
+        return;
+      }
+    } catch (error) {
+      window.location.href = "/login";
+    }
+  }, [currentRole]);
+  
+  const isFetchingRef = useRef(false);
 
-  // جلب المستخدمين
+  // جلب المستخدمين (مرة واحدة فقط)
   useEffect(() => {
     const fetchUsers = async () => {
       try {
@@ -123,18 +175,27 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     fetchUsers();
   }, []);
 
-  // جلب الوثائق من قاعدة البيانات
-  const fetchDocuments = async () => {
+  // ✅ دالة جلب الوثائق (مع منع التخزين المؤقت)
+  const fetchDocuments = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    
     setIsLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch("http://localhost:3000/api/documents", {
-        headers: { "Authorization": `Bearer ${token}` }
+      // ✅ إضافة timestamp لمنع التخزين المؤقت
+      const timestamp = Date.now();
+      const response = await fetch(`http://localhost:3000/api/documents?_=${timestamp}`, {
+        headers: { 
+          "Authorization": `Bearer ${token}`,
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache"
+        }
       });
       if (response.ok) {
         const data = await response.json();
+        console.log(" Documents fetched at:", new Date().toLocaleTimeString(), "Count:", data.length);
         
-        // إضافة اسم المنشئ والدور الحالي لكل وثيقة
         const enrichedDocs = data.map((doc: any) => {
           const creator = users.find(u => u.id === doc.creatorId);
           const currentStepRole = doc.workflow?.[doc.currentStep - 1]?.role;
@@ -150,16 +211,41 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
       console.error("Error fetching documents:", error);
     } finally {
       setIsLoading(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, [users]);
 
+  // جلب البيانات عند تحميل الصفحة
   useEffect(() => {
     if (users.length > 0) {
       fetchDocuments();
     }
-  }, [users]);
+  }, [users, fetchDocuments]);
 
-  // تصفية الوثائق حسب البحث والنوع
+  // ✅ الاستماع لحدث تحديث الوثائق (من صفحة إنشاء وثيقة جديدة)
+  useEffect(() => {
+    const handleDocumentsUpdate = (event: any) => {
+      console.log(" Documents updated event received at:", new Date().toLocaleTimeString());
+      fetchDocuments();
+    };
+    
+    window.addEventListener("documents-updated", handleDocumentsUpdate);
+    
+    return () => {
+      window.removeEventListener("documents-updated", handleDocumentsUpdate);
+    };
+  }, [fetchDocuments]);
+
+  // ✅ تحديث تلقائي كل 5 ثواني (كحل احتياطي)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log("🔄 Auto-refresh check...");
+      fetchDocuments();
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [fetchDocuments]);
+
   const filteredDocuments = useMemo(() => {
     return documents.filter(doc => {
       const matchesSearch = doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -169,7 +255,6 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     });
   }, [documents, searchQuery, typeFilter]);
 
-  // الطلبات الواردة: الوثائق التي تنتظر توقيع المستخدم الحالي
   const incomingRequests = useMemo(() => {
     const arabicRole = ROLE_MAPPING[currentRole] || currentRole;
     return filteredDocuments.filter(doc => 
@@ -177,7 +262,6 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     );
   }, [filteredDocuments, currentRole]);
 
-  // الطلبات الصادرة: الوثائق التي وقعها المستخدم الحالي (أكمل دوره فيها)
   const outgoingRequests = useMemo(() => {
     const arabicRole = ROLE_MAPPING[currentRole] || currentRole;
     return filteredDocuments.filter(doc => {
@@ -190,12 +274,34 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     });
   }, [filteredDocuments, currentRole, users]);
 
-  // توقيع وثيقة
+  // ✅ دالة التحقق من التمرير إلى أسفل الوثيقة
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    const isBottom = target.scrollHeight - target.scrollTop <= target.clientHeight + 50;
+    if (isBottom) {
+      setHasScrolledToBottom(true);
+    }
+  };
+
+  // ✅ فتح نافذة المعاينة للتوقيع
+  const openSignModal = (doc: Document) => {
+    setHasScrolledToBottom(false);
+    setSelectedDocForSign(doc);
+    setViewingDoc({ isOpen: true, doc });
+  };
+
+  // ✅ تأكيد التوقيع
+  const confirmSign = async () => {
+    if (selectedDocForSign) {
+      await handleSign(selectedDocForSign.id, selectedDocForSign);
+      setShowConfirmSign(false);
+      setViewingDoc({ isOpen: false, doc: null });
+      setSelectedDocForSign(null);
+      setHasScrolledToBottom(false);
+    }
+  };
+
   const handleSign = async (docId: number, doc: Document) => {
-    console.log("=== SIGNING DOCUMENT ===");
-    console.log("Doc ID:", docId);
-    console.log("Current role:", currentRole);
-    
     try {
       const userStr = localStorage.getItem("user");
       const user = JSON.parse(userStr || "{}");
@@ -216,9 +322,8 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
       });
       
       if (response.ok) {
-        console.log("Sign successful");
         toast({ title: "تم التوقيع بنجاح", description: "تم توقيع الوثيقة ونقلها للمستخدم التالي" });
-        await fetchDocuments();
+        fetchDocuments();
       } else {
         const errorData = await response.json();
         throw new Error(errorData.error || "فشل في التوقيع");
@@ -229,61 +334,42 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     }
   };
 
-  // إعادة وثيقة
-  // إعادة وثيقة
-const handleReturn = async () => {
-  if (!returnModal.docId) return;
-  
-  try {
-    const userStr = localStorage.getItem("user");
-    const user = JSON.parse(userStr || "{}");
-    const token = localStorage.getItem("token");
+  const handleReturn = async () => {
+    if (!returnModal.docId) return;
     
-    console.log("Return request:", {
-      docId: returnModal.docId,
-      returnerId: user.id,
-      returnerRole: currentRole,
-      reason: returnModal.reason
-    });
-    
-    const response = await fetch(`http://localhost:3000/api/documents/${returnModal.docId}/return`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        returnerId: user.id,
-        returnerRole: currentRole,
-        reason: returnModal.reason
-      })
-    });
-    
-    const data = await response.json();
-    console.log("Return response:", data);
-    
-    if (response.ok) {
-      toast({ 
-        title: "✅ تمت الإعادة", 
-        description: "تم إعادة الوثيقة إلى شؤون الخريجين للمراجعة",
-        className: "bg-yellow-50 border-yellow-200"
+    try {
+      const userStr = localStorage.getItem("user");
+      const user = JSON.parse(userStr || "{}");
+      const token = localStorage.getItem("token");
+      
+      const response = await fetch(`http://localhost:3000/api/documents/${returnModal.docId}/return`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          returnerId: user.id,
+          returnerRole: currentRole,
+          reason: returnModal.reason
+        })
       });
-      setReturnModal({ isOpen: false, docId: null, reason: "" });
-      await fetchDocuments();
-    } else {
-      throw new Error(data.error || "فشل في الإعادة");
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        toast({ title: " تمت الإعادة", description: "تم إعادة الوثيقة إلى شؤون الخريجين للمراجعة" });
+        setReturnModal({ isOpen: false, docId: null, reason: "" });
+        fetchDocuments();
+      } else {
+        throw new Error(data.error || "فشل في الإعادة");
+      }
+    } catch (error: any) {
+      console.error("Return error:", error);
+      toast({ title: " خطأ", description: error.message || "حدث خطأ أثناء الإعادة", variant: "destructive" });
     }
-  } catch (error: any) {
-    console.error("Return error:", error);
-    toast({ 
-      title: "❌ خطأ", 
-      description: error.message || "حدث خطأ أثناء الإعادة", 
-      variant: "destructive" 
-    });
-  }
-};
+  };
 
-  // تسجيل الوثيقة على Blockchain
   const handleRegisterOnChain = async (docId: number) => {
     setBlockchainLoading(docId);
     try {
@@ -300,7 +386,7 @@ const handleReturn = async () => {
 
       if (response.ok) {
         toast({
-          title: "✅ تم التسجيل على Blockchain",
+          title: " تم التسجيل على Blockchain",
           description: (
             <span>
               تم تسجيل الوثيقة بنجاح.{" "}
@@ -310,7 +396,7 @@ const handleReturn = async () => {
             </span>
           ) as any,
         });
-        await fetchDocuments();
+        fetchDocuments();
       } else if (response.status === 409) {
         toast({
           title: "ℹ️ مسجّلة مسبقاً",
@@ -346,18 +432,157 @@ const handleReturn = async () => {
     return types[type] || type;
   };
 
-  const getStatusBadge = (status: string) => {
-    if (status === "completed" || status === "Verified") {
-      return <Badge className="bg-green-100 text-green-700">مكتمل</Badge>;
-    } else if (status === "in_progress" || status === "Pending") {
-      return <Badge className="bg-blue-100 text-blue-700">قيد التقدم</Badge>;
-    } else if (status === "returned" || status === "Returned") {
-      return <Badge className="bg-yellow-100 text-yellow-700">معاد</Badge>;
+  // ✅ دالة الحالة - تعرض سلسلة التوقيعات بشكل مختصر مع Dropdown
+  const getStatusBadge = (doc: Document) => {
+    const workflow = doc.workflow || [];
+    const currentStep = doc.currentStep || 1;
+    
+    const signedSigners = workflow.slice(0, currentStep - 1).map(signer => signer.role);
+    const currentSigner = workflow[currentStep - 1];
+    const remainingSigners = workflow.slice(currentStep);
+    
+    let shortText = "";
+    
+    if (doc.status === "Verified" || doc.status === "completed") {
+      shortText = "مكتملة";
+    } else if (doc.status === "Returned" || doc.status === "returned") {
+      shortText = "أعيدت";
+    } else if (currentSigner) {
+      shortText = `في انتظار ${currentSigner.role}`;
+    } else {
+      shortText = "قيد التقدم";
     }
-    return <Badge variant="secondary">{status}</Badge>;
+    
+    const fullDetails = (
+      <div className="space-y-1 p-1 min-w-[200px]">
+        {signedSigners.length > 0 && (
+          <div className="border-b pb-1 mb-1">
+            <p className="text-xs font-bold mb-1">تم التوقيع:</p>
+            {signedSigners.map((role, idx) => (
+              <p key={idx} className="text-xs pr-2">✓ {role}</p>
+            ))}
+          </div>
+        )}
+        
+        {currentSigner && doc.status !== "Verified" && doc.status !== "completed" && (
+          <div className="border-b pb-1 mb-1">
+            <p className="text-xs font-bold mb-1">في انتظار:</p>
+            <p className="text-xs pr-2">{currentSigner.role}</p>
+          </div>
+        )}
+        
+        {remainingSigners.length > 0 && doc.status !== "Verified" && doc.status !== "completed" && (
+          <div>
+            <p className="text-xs font-bold mb-1">ثم ينتقل إلى:</p>
+            {remainingSigners.map((signer, idx) => (
+              <p key={idx} className="text-xs pr-2">
+                {idx === 0 ? "↓ " : "   "}{signer.role}
+              </p>
+            ))}
+          </div>
+        )}
+        
+        {doc.status === "Verified" && (
+          <div>
+            <p className="text-xs font-bold mb-1">سلسلة التوقيعات:</p>
+            {workflow.map((signer, idx) => (
+              <p key={idx} className="text-xs pr-2">
+                {idx + 1}. {signer.role} ✓
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+    
+    return (
+      <div className="relative group">
+        <div className="cursor-help border-b border-dashed border-gray-300 pb-0.5">
+          {shortText}
+        </div>
+        <div className="absolute z-50 invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all duration-200 bg-white border border-gray-200 rounded-lg shadow-xl p-3 min-w-[220px] top-full right-0 mt-1">
+          {fullDetails}
+        </div>
+      </div>
+    );
   };
 
-  if (isLoading) {
+  // ✅ دالة لعرض الوثيقة بشكل صحيح
+  const renderDocumentPreview = (doc: Document) => {
+    const fileUrl = doc.fileUrl;
+    
+    if (!fileUrl || fileUrl === "temp.pdf") {
+      return (
+        <div className="text-center py-8 text-muted-foreground">
+          <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
+          <p>لا توجد معاينة متاحة لهذه الوثيقة</p>
+          <p className="text-xs mt-1">(الملف الأصلي غير مخزن في النظام)</p>
+        </div>
+      );
+    }
+    
+    if (fileUrl.startsWith('data:image/')) {
+      return (
+        <div className="mt-4 border rounded-lg p-4 bg-muted/20">
+          <img 
+            src={fileUrl} 
+            alt={doc.title}
+            className="max-w-full max-h-96 mx-auto rounded-lg shadow-md"
+            onError={(e) => {
+              console.error("Image failed to load");
+              e.currentTarget.src = "https://placehold.co/400x300/f0f0f0/cccccc?text=خطأ+في+تحميل+الصورة";
+            }}
+          />
+        </div>
+      );
+    }
+    
+    if (fileUrl.startsWith('data:application/pdf')) {
+      return (
+        <div className="mt-4 border rounded-lg p-4 bg-muted/20">
+          <iframe 
+            src={fileUrl} 
+            className="w-full h-96 border rounded"
+            title={doc.title}
+          />
+          <div className="text-center mt-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => {
+                const link = document.createElement('a');
+                link.href = fileUrl;
+                link.download = doc.title;
+                link.click();
+              }}
+            >
+              تحميل PDF
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="mt-4 border rounded-lg p-4 text-center bg-muted/20">
+        <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
+        <p className="mb-2">لا يمكن معاينة هذا النوع من الملفات مباشرة</p>
+        <Button 
+          variant="outline"
+          onClick={() => {
+            const link = document.createElement('a');
+            link.href = fileUrl;
+            link.download = doc.title;
+            link.click();
+          }}
+        >
+          تحميل الملف
+        </Button>
+      </div>
+    );
+  };
+
+  if (isLoading && documents.length === 0) {
     return (
       <div className="min-h-screen bg-muted/20">
         <Navbar />
@@ -467,56 +692,45 @@ const handleReturn = async () => {
                             </div>
                           </TableCell>
                           <TableCell>{getTypeLabel(doc.type)}</TableCell>
-                          <TableCell>{getStatusBadge(doc.status)}</TableCell>
+                          <TableCell>{getStatusBadge(doc)}</TableCell>
                           <TableCell>{new Date(doc.createdAt).toLocaleDateString("ar-EG")}</TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-2 justify-end">
-                              {/* زر العرض - يظهر للجميع */}
-                              <Button 
-                                size="sm" 
-                                variant="outline" 
-                                className="border-primary text-primary hover:bg-primary/5 gap-1" 
-                                onClick={() => setViewingDoc({ isOpen: true, doc })}
-                              >
-                                <FileText className="h-4 w-4" /> عرض
-                              </Button>
-                              
-                              {/* زر التوقيع - يظهر للجميع */}
-                              <Button 
-                                size="sm" 
-                                className="bg-green-600 hover:bg-green-700 gap-1" 
-                                onClick={() => handleSign(doc.id, doc)}
-                              >
-                                <CheckCircle2 className="h-4 w-4" /> توقيع
-                              </Button>
-                              
-                              {/* زر إعادة - يظهر فقط للمسجل العام */}
-                              {currentRole === "General-Registrar" && (
-                                <Button 
-                                  size="sm" 
-                                  variant="outline" 
-                                  className="text-yellow-600 border-yellow-200 hover:bg-yellow-50 gap-1" 
-                                  onClick={() => setReturnModal({ isOpen: true, docId: doc.id, reason: "" })}
-                                >
-                                  <RotateCcw className="h-4 w-4" /> إعادة
-                                </Button>
-                              )}
-                              
-                              {/* زر تعديل - يظهر فقط لشؤون الخريجين */}
-                              {currentRole === "Graduate-Affairs" && (
-                                <Button 
-                                  size="sm" 
-                                  variant="outline" 
-                                  className="text-blue-600 border-blue-200 hover:bg-blue-50 gap-1" 
-                                  onClick={() => {
-                                    toast({ title: "تعديل", description: "سيتم إضافة صفحة التعديل قريباً" });
-                                  }}
-                                >
-                                  <PenTool className="h-4 w-4" /> تعديل
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
+  <div className="flex items-center gap-2 justify-end">
+    {/* ✅ زر عرض فقط - لون أزرق */}
+    <Button 
+      size="sm" 
+      variant="outline" 
+      className="border-primary text-primary hover:bg-primary/5 gap-1" 
+      onClick={() => openSignModal(doc)}
+    >
+      <Eye className="h-4 w-4" /> عرض
+    </Button>
+    
+    {currentRole === "General-Registrar" && (
+      <Button 
+        size="sm" 
+        variant="outline" 
+        className="text-yellow-600 border-yellow-200 hover:bg-yellow-50 gap-1" 
+        onClick={() => setReturnModal({ isOpen: true, docId: doc.id, reason: "" })}
+      >
+        <RotateCcw className="h-4 w-4" /> إعادة
+      </Button>
+    )}
+    
+    {currentRole === "Graduate-Affairs" && (
+      <Button 
+        size="sm" 
+        variant="outline" 
+        className="text-blue-600 border-blue-200 hover:bg-blue-50 gap-1" 
+        onClick={() => {
+          toast({ title: "تعديل", description: "سيتم إضافة صفحة التعديل قريباً" });
+        }}
+      >
+        <PenTool className="h-4 w-4" /> تعديل
+      </Button>
+    )}
+  </div>
+</TableCell>
                         </TableRow>
                       ))
                     )}
@@ -560,7 +774,7 @@ const handleReturn = async () => {
                             </div>
                           </TableCell>
                           <TableCell>{getTypeLabel(doc.type)}</TableCell>
-                          <TableCell>{getStatusBadge(doc.status)}</TableCell>
+                          <TableCell>{getStatusBadge(doc)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2 justify-end">
                               <User className="h-4 w-4 opacity-50" />
@@ -569,33 +783,43 @@ const handleReturn = async () => {
                           </TableCell>
                           <TableCell>{new Date(doc.createdAt).toLocaleDateString("ar-EG")}</TableCell>
                           <TableCell>
-                            {doc.status === "Verified" && (
-                              doc.blockchainTxUrl ? (
-                                <a
-                                  href={doc.blockchainTxUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 hover:bg-green-100 transition-colors"
-                                >
-                                  <Link className="h-3 w-3" /> مسجّل على Blockchain
-                                </a>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="text-purple-700 border-purple-200 hover:bg-purple-50 gap-1 text-xs"
-                                  onClick={() => handleRegisterOnChain(doc.id)}
-                                  disabled={blockchainLoading === doc.id}
-                                >
-                                  {blockchainLoading === doc.id ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <Link className="h-3 w-3" />
-                                  )}
-                                  تسجيل في Blockchain
-                                </Button>
-                              )
-                            )}
+                            <div className="flex items-center gap-2 justify-end">
+                              <Button 
+                                size="sm" 
+                                variant="outline" 
+                                className="border-primary text-primary hover:bg-primary/5 gap-1" 
+                                onClick={() => setViewingDoc({ isOpen: true, doc })}
+                              >
+                                <Eye className="h-4 w-4" /> عرض
+                              </Button>
+                              {doc.status === "Verified" && (
+                                doc.blockchainTxUrl ? (
+                                  <a
+                                    href={doc.blockchainTxUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 hover:bg-green-100 transition-colors"
+                                  >
+                                    <Link className="h-3 w-3" /> مسجّل على Blockchain
+                                  </a>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-purple-700 border-purple-200 hover:bg-purple-50 gap-1 text-xs"
+                                    onClick={() => handleRegisterOnChain(doc.id)}
+                                    disabled={blockchainLoading === doc.id}
+                                  >
+                                    {blockchainLoading === doc.id ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Link className="h-3 w-3" />
+                                    )}
+                                    تسجيل في Blockchain
+                                  </Button>
+                                )
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
@@ -630,36 +854,145 @@ const handleReturn = async () => {
         </DialogContent>
       </Dialog>
 
-      {/* View Document Modal */}
-      <Dialog open={viewingDoc.isOpen} onOpenChange={(open) => setViewingDoc(prev => ({ ...prev, isOpen: open }))}>
-        <DialogContent className="max-w-3xl text-right" dir="rtl">
+      {/* ✅ View Document Modal - مع زر التوقيع داخل النافذة */}
+      <Dialog open={viewingDoc.isOpen} onOpenChange={(open) => {
+        setViewingDoc(prev => ({ ...prev, isOpen: open }));
+        if (!open) {
+          setHasScrolledToBottom(false);
+          setSelectedDocForSign(null);
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto text-right" dir="rtl">
           <DialogHeader>
-            <DialogTitle>تفاصيل الوثيقة</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 justify-end">
+              <FileText className="h-5 w-5 text-primary" />
+              <span>معاينة المستند: {viewingDoc.doc?.title}</span>
+            </DialogTitle>
           </DialogHeader>
+          
           {viewingDoc.doc && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              {/* معلومات الوثيقة */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/20 rounded-lg">
                 <div>
-                  <p className="text-sm text-muted-foreground">العنوان</p>
-                  <p className="font-bold">{viewingDoc.doc.title}</p>
+                  <p className="text-xs text-muted-foreground">رقم الوثيقة</p>
+                  <p className="font-bold text-sm">#{viewingDoc.doc.id}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">النوع</p>
-                  <p>{getTypeLabel(viewingDoc.doc.type)}</p>
+                  <p className="text-xs text-muted-foreground">النوع</p>
+                  <p className="font-bold text-sm">{getTypeLabel(viewingDoc.doc.type)}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">الحالة</p>
-                  <p>{getStatusBadge(viewingDoc.doc.status)}</p>
+                  <p className="text-xs text-muted-foreground">الحالة</p>
+                  <p>{getStatusBadge(viewingDoc.doc)}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">تاريخ الإنشاء</p>
-                  <p>{new Date(viewingDoc.doc.createdAt).toLocaleDateString("ar-EG")}</p>
+                  <p className="text-xs text-muted-foreground">تاريخ الإنشاء</p>
+                  <p className="font-bold text-sm">{new Date(viewingDoc.doc.createdAt).toLocaleDateString("ar-EG")}</p>
                 </div>
               </div>
+              
+              {/* رابط Blockchain إذا وجد */}
+              {viewingDoc.doc.blockchainTxUrl && (
+                <div className="p-3 bg-blue-50/50 rounded-lg border border-blue-200">
+                  <p className="text-xs text-muted-foreground text-right">🔗 تسجيل Blockchain</p>
+                  <a 
+                    href={viewingDoc.doc.blockchainTxUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-primary text-sm font-mono break-all hover:underline text-right block"
+                  >
+                    عرض المعاملة على Etherscan
+                  </a>
+                </div>
+              )}
+              
+              {/* ✅ معاينة الوثيقة مع كشف التمرير */}
+              <div 
+                className="border rounded-lg overflow-hidden bg-white max-h-[400px] overflow-y-auto"
+                onScroll={handleScroll}
+              >
+                <div className="bg-muted/30 px-4 py-2 border-b sticky top-0">
+                  <p className="text-sm font-bold">معاينة المستند</p>
+                </div>
+                <div className="p-4">
+                  {renderDocumentPreview(viewingDoc.doc)}
+                </div>
+              </div>
+              
+              {/* ✅ زر التوقيع - يظهر فقط بعد التمرير إلى الأسفل */}
+              {hasScrolledToBottom && viewingDoc.doc.status !== "Verified" && (
+                <div className="flex justify-center pt-4 border-t">
+                  <Button 
+                    className="bg-green-600 hover:bg-green-700 gap-2 px-8 py-2 text-lg"
+                    onClick={() => setShowConfirmSign(true)}
+                  >
+                    <CheckCircle2 className="h-5 w-5" />
+                    توقيع المستند
+                  </Button>
+                </div>
+              )}
+              
+              {/* ✅ رسالة تحذير إذا لم يمرر المستخدم */}
+              {!hasScrolledToBottom && viewingDoc.doc.status !== "Verified" && (
+                <div className="flex justify-center pt-4 border-t">
+                  <p className="text-sm text-muted-foreground">
+                    ⚠️ يرجى التمرير إلى أسفل الوثيقة لقراءتها بالكامل قبل التوقيع
+                  </p>
+                </div>
+              )}
             </div>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setViewingDoc({ isOpen: false, doc: null })}>إغلاق</Button>
+          
+          <DialogFooter className="flex-row-reverse gap-2 mt-4">
+            <Button variant="outline" onClick={() => {
+              setViewingDoc({ isOpen: false, doc: null });
+              setHasScrolledToBottom(false);
+            }}>
+              إغلاق
+            </Button>
+            {viewingDoc.doc?.fileUrl && viewingDoc.doc.fileUrl !== "temp.pdf" && (
+              <Button onClick={() => {
+                const url = viewingDoc.doc?.fileUrl;
+                const title = viewingDoc.doc?.title;
+                if (url && title) {
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = title;
+                  link.click();
+                }
+              }}>
+                <Download className="h-4 w-4 ml-2" />
+                تحميل الملف
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ✅ رسالة تأكيد التوقيع */}
+      <Dialog open={showConfirmSign} onOpenChange={setShowConfirmSign}>
+        <DialogContent className="sm:max-w-md text-right" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 justify-end">
+              <Shield className="h-5 w-5 text-primary" />
+              تأكيد التوقيع
+            </DialogTitle>
+            <DialogDescription className="text-right pt-4">
+              <p>هل أنت متأكد من توقيع المستند التالي؟</p>
+              <p className="font-bold mt-2">{selectedDocForSign?.title}</p>
+              <p className="text-sm text-muted-foreground mt-2">
+                بعد التوقيع، سيتم نقل المستند إلى الموقع التالي في مسار التوقيع.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-row-reverse gap-2">
+            <Button onClick={confirmSign} className="bg-green-600 hover:bg-green-700">
+              نعم، أوقع الآن
+            </Button>
+            <Button variant="outline" onClick={() => setShowConfirmSign(false)}>
+              إلغاء
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

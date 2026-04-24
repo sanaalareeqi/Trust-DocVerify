@@ -17,6 +17,7 @@ import { eq, desc, sql } from "drizzle-orm";
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
   createDocument(doc: any): Promise<any>;
@@ -38,6 +39,11 @@ export interface IStorage {
   updateExternalInvitationStatus(token: string, status: string, signerIp: string): Promise<any>;
   // دوال السجل الأمني
   createSecurityLog(log: any): Promise<any>;
+  // ✅ دوال استعادة كلمة المرور (Forgot Password)
+  createPasswordReset(userId: number, code: string, expiresAt: Date): Promise<any>;
+  getPasswordResetByCode(code: string): Promise<any>;
+  markResetCodeAsUsed(code: string): Promise<void>;
+  updateUserPassword(userId: number, hashedPassword: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -51,6 +57,15 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(users)
       .where(eq(users.username, username));
+    return user;
+  }
+
+  // ✅ البحث عن مستخدم عن طريق البريد الإلكتروني
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email));
     return user;
   }
 
@@ -141,6 +156,7 @@ export class DatabaseStorage implements IStorage {
       .set({ isRead: true })
       .where(eq(notifications.id, id));
   }
+  
 
   // ✅ دوال التوقيع الرقمي (باستخدام SQL raw)
   async updateUserPublicKey(userId: number, publicKey: string): Promise<User> {
@@ -185,6 +201,75 @@ export class DatabaseStorage implements IStorage {
     const [newLog] = await db.insert(securityLogs).values(log).returning();
     return newLog;
   }
+  // ✅ تسجيل محاولة تسجيل دخول (ناجحة أو فاشلة)
+async logLoginAttempt(username: string, ipAddress: string, success: boolean): Promise<void> {
+  await db.execute(
+    sql`INSERT INTO login_attempts (username, ip_address, success, attempted_at) 
+        VALUES (${username}, ${ipAddress}, ${success}, NOW())`
+  );
 }
+
+// ✅ التحقق من عدد المحاولات الفاشلة خلال آخر 15 دقيقة
+async getFailedLoginCount(username: string, ipAddress: string): Promise<number> {
+  const result = await db.execute(
+    sql`SELECT COUNT(*) as count FROM login_attempts 
+        WHERE username = ${username} 
+        AND ip_address = ${ipAddress} 
+        AND success = FALSE 
+        AND attempted_at > NOW() - INTERVAL '15 minutes'`
+  );
+  return parseInt(result.rows[0]?.count || '0');
+}
+
+// ✅ حذف محاولات مستخدم معين (بعد تسجيل الدخول الناجح)
+async clearLoginAttempts(username: string, ipAddress: string): Promise<void> {
+  await db.execute(
+    sql`DELETE FROM login_attempts WHERE username = ${username} AND ip_address = ${ipAddress}`
+  );
+}
+
+  // ✅✅✅ دوال استعادة كلمة المرور (Forgot Password) ✅✅✅
+
+  // إنشاء رمز إعادة تعيين كلمة المرور
+  async createPasswordReset(userId: number, code: string, expiresAt: Date): Promise<any> {
+    // حذف أي رموز سابقة للمستخدم قبل إنشاء رمز جديد
+    await db.execute(
+      sql`DELETE FROM password_resets WHERE user_id = ${userId} AND used = FALSE`
+    );
+    
+    const result = await db.execute(
+      sql`INSERT INTO password_resets (user_id, code, expires_at, created_at, used) 
+          VALUES (${userId}, ${code}, ${expiresAt}, NOW(), FALSE) 
+          RETURNING *`
+    );
+    return result.rows[0];
+  }
+
+  // البحث عن رمز إعادة التعيين (غير مستخدم وغير منتهي الصلاحية)
+  async getPasswordResetByCode(code: string): Promise<any> {
+    const result = await db.execute(
+      sql`SELECT * FROM password_resets 
+          WHERE code = ${code} 
+          AND expires_at > NOW() 
+          AND used = FALSE`
+    );
+    return result.rows[0];
+  }
+
+  // تعليم الرمز كمستخدم
+  async markResetCodeAsUsed(code: string): Promise<void> {
+    await db.execute(
+      sql`UPDATE password_resets SET used = TRUE WHERE code = ${code}`
+    );
+  }
+
+  // تحديث كلمة مرور المستخدم
+  async updateUserPassword(userId: number, hashedPassword: string): Promise<void> {
+    await db.execute(
+      sql`UPDATE users SET password = ${hashedPassword} WHERE id = ${userId}`
+    );
+  }
+}
+
 
 export const storage = new DatabaseStorage();

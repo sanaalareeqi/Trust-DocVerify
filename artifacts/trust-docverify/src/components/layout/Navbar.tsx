@@ -12,16 +12,10 @@ export default function Navbar() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [currentRole, setCurrentRole] = useState<string>("");
 
-  // ✅ صلاحية إنشاء الوثائق (من يمكنه رؤية زر "توقيع وثيقة")
+  // ✅ صلاحية إنشاء الوثائق (فقط الأدمن)
   const canCreateDocument = (role: string): boolean => {
-    const createPermissions = [
-      "شؤون الخريجين",
-      "مسؤول التوظيف",
-      "الأمين العام",
-      "رئيس الجامعة",
-      "مقدم طلب الشراء"
-    ];
-    return createPermissions.includes(role);
+    // فقط مدير النظام يمكنه رؤية زر "توقيع وثيقة"
+    return role === "مدير النظام";
   };
 
   // التحقق من حالة تسجيل الدخول عند تحميل الصفحة
@@ -97,7 +91,7 @@ export default function Navbar() {
       "الأمين العام": "Secretary-General",
       "رئيس مجلس الأمناء": "Board-Chairman",
       "مقدم طلب الشراء": "Requester",
-      "المدير المالي": "Financial-Manager",
+      "المدير المالي": "finance",
       "المراجع": "Auditor",
       "الحسابات": "Accounts"
     };
@@ -110,7 +104,7 @@ export default function Navbar() {
   const getNavItems = () => {
     const items: { href: string; label: string; icon: any }[] = [];
     
-    // ✅ زر "توقيع وثيقة" - يظهر فقط للمستخدمين المصرح لهم
+    // ✅ زر "توقيع وثيقة" - يظهر فقط للأدمن
     if (isLoggedIn && canCreateDocument(currentUser?.role)) {
       items.push({ href: "/sign", label: "توقيع وثيقة", icon: PenTool });
     }
@@ -154,7 +148,7 @@ export default function Navbar() {
               </Link>
             ))}
             
-            {/* ✅ زر لوحة التحكم - يظهر للجميع (بدون قائمة الأدوار) */}
+            {/* ✅ زر لوحة التحكم - يظهر للجميع */}
             {isLoggedIn && (
               <Link 
                 href={getDashboardPath()}

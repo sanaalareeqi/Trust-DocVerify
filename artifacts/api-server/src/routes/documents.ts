@@ -8,6 +8,9 @@ import { db, users } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { scanFile } from "../services/fileSecurity.service";
 import { storeDocumentHashOnChain } from "../services/blockchain.service";
+import { addQRCodeToImage, addQRCodeToPDF } from "../services/qr.service";
+import * as fs from 'fs';
+import * as path from 'path';
 
 const router: IRouter = Router();
 
@@ -70,7 +73,7 @@ router.post("/users", async (req, res) => {
   }
 });
 
-// ✅ حذف مستخدم (للأدمن فقط)
+// ✅ حذف مستخدم (للأدمن فقط) - نسخة محسنة
 router.delete("/users/:id", async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
@@ -85,13 +88,49 @@ router.delete("/users/:id", async (req, res) => {
       return res.status(403).json({ error: "لا يمكن حذف مدير النظام" });
     }
     
-    // @ts-ignore
-    await db.delete(users).where(eq(users.id, userId));
+    // ✅ 1. حذف المفتاح الخاص للمستخدم من مجلد keys
+    const privateKeyPath = path.join(process.cwd(), 'keys', `user_${userId}.key`);
+    if (fs.existsSync(privateKeyPath)) {
+      fs.unlinkSync(privateKeyPath);
+      console.log(`✅ Deleted private key for user ${userId}`);
+    }
+    
+    // ✅ 2. حذف سجلات التوقيع المرتبطة بالمستخدم
+    await db.execute(`DELETE FROM signature_logs WHERE signer_id = ${userId}`);
+    
+    // ✅ 3. حذف الإشعارات المرتبطة بالمستخدم
+    await db.execute(`DELETE FROM notifications WHERE recipient_id = ${userId}`);
+    
+    // ✅ 4. حذف دعوات التوقيع الخارجي المرتبطة بمستندات المستخدم
+    await db.execute(`
+      DELETE FROM external_signature_invitations 
+      WHERE document_id IN (SELECT id FROM documents WHERE creator_id = ${userId})
+    `);
+    
+    // ✅ 5. حذف سجلات التوقيع المرتبطة بمستندات المستخدم
+    await db.execute(`
+      DELETE FROM signature_logs 
+      WHERE document_id IN (SELECT id FROM documents WHERE creator_id = ${userId})
+    `);
+    
+    // ✅ 6. حذف الإشعارات المرتبطة بمستندات المستخدم
+    await db.execute(`
+      DELETE FROM notifications 
+      WHERE document_id IN (SELECT id FROM documents WHERE creator_id = ${userId})
+    `);
+    
+    // ✅ 7. حذف الوثائق التي أنشأها المستخدم
+    await db.execute(`DELETE FROM documents WHERE creator_id = ${userId}`);
+    
+    // ✅ 8. حذف المستخدم نفسه
+    await db.execute(`DELETE FROM users WHERE id = ${userId}`);
+    
+    console.log(`✅ User ${userId} (${user.username}) deleted successfully`);
     
     res.json({ success: true, message: "تم حذف المستخدم بنجاح" });
   } catch (err) {
     console.error("Error deleting user:", err);
-    res.status(500).json({ error: "فشل في حذف المستخدم" });
+    res.status(500).json({ error: "فشل في حذف المستخدم: " + (err as Error).message });
   }
 });
 
@@ -153,6 +192,142 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// ✅ تحميل الوثيقة مع QR Code (لعرضها أو تنزيلها)
+router.get("/:id/download", async (req, res) => {
+  try {
+    const docId = parseInt(req.params.id);
+    const doc = await storage.getDocument(docId);
+    
+    if (!doc || !doc.fileUrl) {
+      return res.status(404).json({ error: "الوثيقة غير موجودة" });
+    }
+    
+    // استخراج البيانات من base64
+    const matches = doc.fileUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) {
+      return res.status(400).json({ error: "تنسيق ملف غير صالح" });
+    }
+    
+    const contentType = matches[1];
+    const base64Data = matches[2];
+    const fileBuffer = Buffer.from(base64Data, 'base64');
+    
+    // تحديد اسم الملف
+    let extension = 'bin';
+    if (contentType.includes('pdf')) extension = 'pdf';
+    else if (contentType.includes('png')) extension = 'png';
+    else if (contentType.includes('jpeg')) extension = 'jpg';
+    else if (contentType.includes('jpg')) extension = 'jpg';
+    
+    const filename = `document_${docId}.${extension}`;
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.send(fileBuffer);
+    
+  } catch (err) {
+    console.error("Error downloading document:", err);
+    res.status(500).json({ error: "فشل في تحميل الوثيقة" });
+  }
+});
+
+// ✅ التحقق من الوثيقة عبر QR Code (API)
+router.get("/verify/:docId", async (req, res) => {
+  try {
+    const docId = parseInt(req.params.docId);
+    
+    if (isNaN(docId)) {
+      return res.status(400).json({ error: "معرف وثيقة غير صالح" });
+    }
+    
+    const doc = await storage.getDocument(docId);
+    if (!doc) {
+      return res.status(404).json({ error: "الوثيقة غير موجودة" });
+    }
+    
+    // جلب سلسلة التوقيعات
+    const signatures = await storage.getSignatureLogs(docId);
+    
+    // جلب معلومات الـ Blockchain إن وجدت
+    let blockchainInfo = null;
+    if (doc.blockchainTxUrl) {
+      blockchainInfo = {
+        txUrl: doc.blockchainTxUrl,
+        verified: true,
+        message: "✅ مسجلة على Blockchain"
+      };
+    }
+    
+    // تنسيق سلسلة التوقيعات للعرض
+    const formattedSignatures = signatures.map((sig: any) => ({
+      role: ROLE_LABELS[sig.signerRole] || sig.signerRole,
+      action: sig.action === "signed" ? "✅ وقع" : "↩️ أعاد",
+      comment: sig.comment || "",
+      timestamp: sig.timestamp,
+    }));
+    
+    res.json({
+      success: true,
+      document: {
+        id: doc.id,
+        title: doc.title,
+        type: doc.type,
+        status: doc.status,
+        createdAt: doc.createdAt,
+        documentHash: doc.documentHash ? doc.documentHash.substring(0, 32) + "..." : null,
+      },
+      blockchain: blockchainInfo,
+      signatures: formattedSignatures,
+      summary: {
+        totalSignatures: signatures.length,
+        isComplete: doc.status === "Verified",
+        isOnBlockchain: !!doc.blockchainTxUrl,
+      }
+    });
+    
+  } catch (err) {
+    console.error("Error verifying document via QR:", err);
+    res.status(500).json({ error: "فشل في التحقق من الوثيقة" });
+  }
+});
+
+// ✅ إضافة QR Code إلى الوثيقة (يدوي)
+router.post("/:id/add-qr", async (req, res) => {
+  try {
+    const docId = parseInt(req.params.id);
+    const doc = await storage.getDocument(docId);
+    
+    if (!doc) {
+      return res.status(404).json({ error: "الوثيقة غير موجودة" });
+    }
+    
+    if (!doc.fileUrl || doc.fileUrl === "temp.pdf") {
+      return res.status(400).json({ error: "لا يمكن إضافة QR Code لهذه الوثيقة" });
+    }
+    
+    const base64Data = doc.fileUrl.split(',')[1];
+    const fileBuffer = Buffer.from(base64Data, 'base64');
+    let newFileUrl = doc.fileUrl;
+    
+    if (doc.fileUrl.startsWith('data:image/')) {
+      const imageWithQR = await addQRCodeToImage(fileBuffer, docId);
+      newFileUrl = `data:image/png;base64,${imageWithQR.toString('base64')}`;
+    } else if (doc.fileUrl.startsWith('data:application/pdf')) {
+      const pdfWithQR = await addQRCodeToPDF(fileBuffer, docId);
+      newFileUrl = `data:application/pdf;base64,${pdfWithQR.toString('base64')}`;
+    } else {
+      return res.status(400).json({ error: "نوع الملف غير مدعوم لإضافة QR Code" });
+    }
+    
+    await storage.updateDocument(docId, { fileUrl: newFileUrl });
+    
+    res.json({ success: true, message: "تم إضافة QR Code إلى الوثيقة بنجاح" });
+  } catch (err) {
+    console.error("Error adding QR code:", err);
+    res.status(500).json({ error: "فشل في إضافة QR Code" });
+  }
+});
+
 router.post("/", async (req, res) => {
   try {
     const { title, type, creatorId, fileUrl, documentHash, workflow, currentStep, externalInvitation } = req.body;
@@ -165,7 +340,6 @@ router.post("/", async (req, res) => {
     
     if (fileUrl && fileUrl !== "temp.pdf" && fileUrl.startsWith('data:')) {
       try {
-        // تحويل data URL إلى Buffer
         const base64Data = fileUrl.split(',')[1];
         const buffer = Buffer.from(base64Data, 'base64');
         
@@ -175,7 +349,6 @@ router.post("/", async (req, res) => {
           securityCheckPassed = false;
           securityError = scanResult.error;
           
-          // تسجيل الحادثة الأمنية
           await storage.createSecurityLog({
             userId: creatorId,
             eventType: 'malicious_file',
@@ -233,6 +406,42 @@ router.post("/", async (req, res) => {
       }
     }
     
+    // ✅ إضافة QR Code إلى الوثيقة (بدون شرط التحقق المسبب للمشكلة)
+    try {
+      if (fileUrl && fileUrl !== "temp.pdf" && fileUrl.startsWith('data:')) {
+        console.log(`📱 Adding QR code to document ${doc.id}...`);
+        
+        const base64Data = fileUrl.split(',')[1];
+        const fileBuffer = Buffer.from(base64Data, 'base64');
+        let newFileUrl = fileUrl;
+        
+        if (fileUrl.startsWith('data:image/')) {
+          console.log(`🖼️ Processing image for QR code...`);
+          const imageWithQR = await addQRCodeToImage(fileBuffer, doc.id);
+          newFileUrl = `data:image/png;base64,${imageWithQR.toString('base64')}`;
+          console.log(`✅ Image QR code added`);
+        } else if (fileUrl.startsWith('data:application/pdf')) {
+          console.log(`📄 Processing PDF for QR code...`);
+          const pdfWithQR = await addQRCodeToPDF(fileBuffer, doc.id);
+          newFileUrl = `data:application/pdf;base64,${pdfWithQR.toString('base64')}`;
+          console.log(`✅ PDF QR code added`);
+        } else {
+          console.log(`⚠️ Unsupported file type for QR code: ${fileUrl.substring(0, 50)}`);
+        }
+        
+        if (newFileUrl !== fileUrl) {
+          await storage.updateDocument(doc.id, { fileUrl: newFileUrl });
+          console.log(`✅ QR Code successfully added to document ${doc.id}`);
+        } else {
+          console.log(`⚠️ QR Code was not added (newFileUrl same as old)`);
+        }
+      } else {
+        console.log(`⚠️ Skipping QR code: fileUrl condition not met`);
+      }
+    } catch (qrError) {
+      console.error(`❌ Failed to add QR code to document ${doc.id}:`, qrError);
+    }
+    
     res.json(doc);
   } catch (err) {
     console.error("Error creating document:", err);
@@ -240,21 +449,33 @@ router.post("/", async (req, res) => {
   }
 });
 
-// ✅ دالة التوقيع الرقمي المعدلة
+// ✅ دالة التوقيع الرقمي المعدلة (مع إضافة تشخيص)
 router.post("/:id/sign", async (req, res) => {
   try {
     const docId = parseInt(req.params.id);
     const { signerId, signerRole, comment, documentHash } = req.body;
     
-    const doc = await storage.getDocument(docId);
-    if (!doc) return res.status(404).json({ error: "Document not found" });
+    console.log("🔐 Sign request received:", { docId, signerId, signerRole });
+    console.log("📝 Document hash (first 32 chars):", documentHash?.substring(0, 32));
     
+    const doc = await storage.getDocument(docId);
+    if (!doc) {
+      console.log("❌ Document not found");
+      return res.status(404).json({ error: "Document not found" });
+    }
+    
+    console.log("🔑 Getting private key for user:", signerId);
     const privateKey = await getPrivateKeyForUser(signerId);
+    console.log("🔑 Private key retrieved:", privateKey ? `Yes (length: ${privateKey.length})` : "No");
+    
     if (!privateKey) {
+      console.error(`❌ No private key found for user ${signerId}`);
       return res.status(400).json({ error: "المفتاح الخاص غير موجود للمستخدم" });
     }
     
+    console.log("✍️ Attempting to sign hash with ECC...");
     const signature = await signHash(documentHash, privateKey);
+    console.log("✅ Signature created successfully, length:", signature.length);
     
     await storage.createSignatureLog({
       documentId: docId,
@@ -282,15 +503,14 @@ router.post("/:id/sign", async (req, res) => {
       currentStep: newStep,
     });
     
-    console.log(`Document ${docId} signed by ${signerRole}: step ${currentStepValue} -> ${newStep}, status: ${newStatus}`);
+    console.log(`✅ Document ${docId} signed by ${signerRole}: step ${currentStepValue} -> ${newStep}, status: ${newStatus}`);
     
     res.json(updatedDoc);
   } catch (err) {
-    console.error("Error signing document:", err);
-    res.status(500).json({ error: "Failed to sign document" });
+    console.error("❌ Error signing document:", err);
+    res.status(500).json({ error: "Failed to sign document: " + (err as Error).message });
   }
 });
-
 // ✅ دالة الإعادة المعدلة (للمسجل العام فقط)
 router.post("/:id/return", async (req, res) => {
   try {
@@ -488,6 +708,24 @@ router.get("/:id/verify-signature", async (req, res) => {
   } catch (err) {
     console.error("Error verifying signature:", err);
     res.status(500).json({ error: "Failed to verify signature" });
+  }
+});
+
+// البحث عن وثيقة بواسطة الهاش
+router.get("/by-hash/:hash", async (req, res) => {
+  try {
+    const { hash } = req.params;
+    const allDocs = await storage.getAllDocuments();
+    const doc = allDocs.find(d => d.documentHash === hash);
+    
+    if (!doc) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+    
+    res.json(doc);
+  } catch (err) {
+    console.error("Error finding document by hash:", err);
+    res.status(500).json({ error: "Failed to find document" });
   }
 });
 
