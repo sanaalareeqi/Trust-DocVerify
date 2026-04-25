@@ -7,9 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { UserPlus, Trash2, Ban, Loader2, KeyRound, Eye, EyeOff, CheckCircle2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { UserPlus, Trash2, Ban, Loader2, KeyRound, Eye, EyeOff, CheckCircle2, Users, GitBranch } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Navbar from "@/components/layout/Navbar";
+import AdminWorkflows from "./AdminWorkflows";
 
 const ROLES = [
   "شؤون الخريجين",
@@ -227,6 +229,17 @@ export default function AdminUsers() {
     <div className="min-h-screen bg-muted/20" dir="rtl">
       <Navbar />
       <main className="container mx-auto px-4 py-8">
+        <Tabs
+          defaultValue={typeof window !== "undefined" && window.location.hash === "#workflows" ? "workflows" : "users"}
+          className="w-full"
+          onValueChange={(v) => { if (typeof window !== "undefined") window.location.hash = v === "workflows" ? "workflows" : ""; }}
+        >
+          <TabsList className="mb-6">
+            <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> إدارة المستخدمين</TabsTrigger>
+            <TabsTrigger value="workflows" className="gap-2"><GitBranch className="h-4 w-4" /> إدارة مسارات التوقيع (Workflow)</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="users">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold">إدارة المستخدمين</h1>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -306,6 +319,12 @@ export default function AdminUsers() {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+
+          <TabsContent value="workflows">
+            <AdminWorkflows />
+          </TabsContent>
+        </Tabs>
       </main>
 
       <Dialog open={changePasswordDialog.isOpen} onOpenChange={(open) => setChangePasswordDialog(prev => ({ ...prev, isOpen: open }))}>
