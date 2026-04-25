@@ -67,15 +67,22 @@ router.post('/login', loginLimiter, async (req, res) => {
   try {
     // ✅ تنظيف المدخلات من XSS
     let { username, password } = req.body;
-    username = xss(username.trim());
+    
+    // ✅ التحقق من صحة اسم المستخدم
+    if (!username || typeof username !== 'string') {
+      return res.status(401).json({ error: 'اسم المستخدم مطلوب' });
+    }
+    
+    username = xss(username.trim().toLowerCase()); // ✅ توحيد صيغة اسم المستخدم
     password = xss(password);
     
     const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';
     
     console.log(`🔐 Login attempt for user: ${username} from IP: ${ipAddress}`);
     
-    // ✅ التحقق من عدد المحاولات الفاشلة خلال آخر 15 دقيقة (طبقة إضافية)
-    const failedCount = await storage.getFailedLoginCount(username, ipAddress);
+    // ✅ التحقق من عدد المحاولات الفاشلة (لكل مستخدم فقط - بدون IP)
+    // 🔧 تم التعديل: استخدام username فقط
+    const failedCount = await storage.getFailedLoginCount(username);
     
     if (failedCount >= 3) {
       console.log(`🚫 User ${username} has exceeded max attempts (${failedCount})`);
@@ -86,18 +93,20 @@ router.post('/login', loginLimiter, async (req, res) => {
     
     // البحث عن المستخدم (محمي من SQL Injection بواسطة Drizzle)
     const result = await db.execute(
-      sql`SELECT id, username, password, name, role, email, is_admin, is_active FROM users WHERE username = ${username}`
+      sql`SELECT id, username, password, name, role, email, is_admin, is_active FROM users WHERE LOWER(username) = ${username}`
     );
     
     const user = result.rows[0];
     
     if (!user) {
+      // 🔧 تم التعديل: استخدام username فقط
       await storage.logLoginAttempt(username, ipAddress, false);
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
     }
     
     // @ts-ignore
     if (user.is_active === false) {
+      // 🔧 تم التعديل: استخدام username فقط
       await storage.logLoginAttempt(username, ipAddress, false);
       return res.status(401).json({ error: 'الحساب موقوف. يرجى التواصل مع مدير النظام' });
     }
@@ -106,6 +115,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     const isValid = await bcrypt.compare(password, user.password);
     
     if (!isValid) {
+      // 🔧 تم التعديل: استخدام username فقط
       await storage.logLoginAttempt(username, ipAddress, false);
       const remaining = 2 - failedCount;
       const remainingText = remaining > 0 ? ` تبقى لك ${remaining} محاولة قبل حظر الحساب لمدة 15 دقيقة.` : '';
@@ -115,8 +125,9 @@ router.post('/login', loginLimiter, async (req, res) => {
     }
     
     // ✅ تسجيل محاولة ناجحة ومسح المحاولات السابقة
+    // 🔧 تم التعديل: استخدام username فقط
     await storage.logLoginAttempt(username, ipAddress, true);
-    await storage.clearLoginAttempts(username, ipAddress);
+    await storage.clearLoginAttempts(username);
     
     // ✅ التحقق من وجود المفتاح العام وإنشاؤه إذا لزم الأمر
     // @ts-ignore
@@ -176,6 +187,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
+
 
 // ✅ طلب إرسال رمز التحقق (Forgot Password)
 router.post('/forgot-password', async (req, res) => {

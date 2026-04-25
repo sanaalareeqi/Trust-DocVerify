@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {
   type User,
   type InsertUser,
@@ -44,6 +43,10 @@ export interface IStorage {
   getPasswordResetByCode(code: string): Promise<any>;
   markResetCodeAsUsed(code: string): Promise<void>;
   updateUserPassword(userId: number, hashedPassword: string): Promise<void>;
+  // ✅ دوال حماية من هجمات القوة الغاشمة (Brute Force Protection)
+  logLoginAttempt(username: string, ipAddress: string, success: boolean): Promise<void>;
+  getFailedLoginCount(username: string): Promise<number>;
+  clearLoginAttempts(username: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -121,6 +124,13 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(documents.createdAt));
   }
 
+  async getLastVerifiedDocument(): Promise<any | null> {
+    const result = await db.execute(
+      sql`SELECT * FROM documents WHERE status = 'Verified' ORDER BY id DESC LIMIT 1`
+    );
+    return result.rows[0] || null;
+  }
+
   async createSignatureLog(log: any): Promise<SignatureLog> {
     const [newLog] = await db.insert(signatureLogs).values(log).returning();
     return newLog;
@@ -156,7 +166,6 @@ export class DatabaseStorage implements IStorage {
       .set({ isRead: true })
       .where(eq(notifications.id, id));
   }
-  
 
   // ✅ دوال التوقيع الرقمي (باستخدام SQL raw)
   async updateUserPublicKey(userId: number, publicKey: string): Promise<User> {
@@ -166,16 +175,21 @@ export class DatabaseStorage implements IStorage {
     return result.rows[0] as User;
   }
 
-  async getUserPublicKey(userId: number): Promise<string | null> {
-    const result = await db.execute(
-      sql`SELECT public_key FROM users WHERE id = ${userId}`
-    );
-    return result.rows[0]?.public_key || null;
-  }
+  // ✅ بعد
+async getUserPublicKey(userId: number): Promise<string | null> {
+  const result = await db.execute(
+    sql`SELECT public_key FROM users WHERE id = ${userId}`
+  );
+  return (result.rows[0]?.public_key as string) || null;
+}
+
 
   // ✅ دوال التوقيع الخارجي
   async createExternalInvitation(invitation: any): Promise<any> {
-    const [newInvitation] = await db.insert(externalSignatureInvitations).values(invitation).returning();
+    const [newInvitation] = await db
+      .insert(externalSignatureInvitations)
+      .values(invitation)
+      .returning();
     return newInvitation;
   }
 
@@ -187,7 +201,11 @@ export class DatabaseStorage implements IStorage {
     return invitation;
   }
 
-  async updateExternalInvitationStatus(token: string, status: string, signerIp: string): Promise<any> {
+  async updateExternalInvitationStatus(
+    token: string,
+    status: string,
+    signerIp: string
+  ): Promise<any> {
     const [updated] = await db
       .update(externalSignatureInvitations)
       .set({ status, signedAt: new Date(), signerIp })
@@ -201,42 +219,97 @@ export class DatabaseStorage implements IStorage {
     const [newLog] = await db.insert(securityLogs).values(log).returning();
     return newLog;
   }
-  // ✅ تسجيل محاولة تسجيل دخول (ناجحة أو فاشلة)
-async logLoginAttempt(username: string, ipAddress: string, success: boolean): Promise<void> {
-  await db.execute(
-    sql`INSERT INTO login_attempts (username, ip_address, success, attempted_at) 
-        VALUES (${username}, ${ipAddress}, ${success}, NOW())`
-  );
-}
 
-// ✅ التحقق من عدد المحاولات الفاشلة خلال آخر 15 دقيقة
-async getFailedLoginCount(username: string, ipAddress: string): Promise<number> {
-  const result = await db.execute(
-    sql`SELECT COUNT(*) as count FROM login_attempts 
-        WHERE username = ${username} 
-        AND ip_address = ${ipAddress} 
-        AND success = FALSE 
-        AND attempted_at > NOW() - INTERVAL '15 minutes'`
-  );
-  return parseInt(result.rows[0]?.count || '0');
-}
+  // ✅✅✅ دوال حماية من هجمات القوة الغاشمة (Brute Force Protection) ✅✅✅
 
-// ✅ حذف محاولات مستخدم معين (بعد تسجيل الدخول الناجح)
-async clearLoginAttempts(username: string, ipAddress: string): Promise<void> {
-  await db.execute(
-    sql`DELETE FROM login_attempts WHERE username = ${username} AND ip_address = ${ipAddress}`
-  );
-}
+  /**
+   * ✅ تسجيل محاولة تسجيل دخول (ناجحة أو فاشلة)
+   * يتم تسجيل username و IP معاً للتتبع الكامل
+   */
+  async logLoginAttempt(
+    username: string,
+    ipAddress: string,
+    success: boolean
+  ): Promise<void> {
+    try {
+      await db.execute(
+        sql`INSERT INTO login_attempts (username, ip_address, success, attempted_at) 
+            VALUES (${username || "unknown"}, ${ipAddress}, ${success}, NOW())`
+      );
+    } catch (error) {
+      console.error("Error logging login attempt:", error);
+    }
+  }
+
+  /**
+   * ✅ التحقق من عدد المحاولات الفاشلة
+   * 🔧 تم التعديل: البحث بـ username فقط (بدون IP)
+   * هذا يضمن حظر المستخدم المحدد بغض النظر عن IP
+   */
+  async getFailedLoginCount(username: string): Promise<number> {
+    try {
+      // ✅ نبحث بـ username فقط (بدون IP)
+      const result = await db.execute(
+        sql`SELECT COUNT(*) as count FROM login_attempts 
+            WHERE username = ${username} 
+            AND success = FALSE 
+            AND attempted_at > NOW() - INTERVAL '15 minutes'`
+      );
+
+      // 🔧 Debugging
+      console.log(
+        `🔍 Raw result for ${username}:`,
+        JSON.stringify(result.rows[0])
+      );
+
+      // ✅ استخراج القيمة بشكل صحيح
+      // ✅ بعد
+const countValue = result.rows[0]?.count as string | undefined;
+const failedCount = parseInt(countValue || '0', 10);
+
+
+      console.log(`📊 ${username}: ${failedCount} failed attempts`);
+
+      return failedCount;
+    } catch (error) {
+      console.error("Error getting failed login count:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * ✅ مسح محاولات تسجيل دخول فاشلة بعد تسجيل الدخول الناجح
+   * 🔧 تم التعديل: مسح محاولات username فقط (بدون IP)
+   */
+  async clearLoginAttempts(username: string): Promise<void> {
+    try {
+      // ✅ نمسح جميع محاولات المستخدم المحدد
+      await db.execute(
+        sql`DELETE FROM login_attempts WHERE username = ${username}`
+      );
+
+      console.log(`🗑️ Cleared all login attempts for ${username}`);
+    } catch (error) {
+      console.error("Error clearing login attempts:", error);
+    }
+  }
 
   // ✅✅✅ دوال استعادة كلمة المرور (Forgot Password) ✅✅✅
 
-  // إنشاء رمز إعادة تعيين كلمة المرور
-  async createPasswordReset(userId: number, code: string, expiresAt: Date): Promise<any> {
+  /**
+   * إنشاء رمز إعادة تعيين كلمة المرور
+   * يتم حذف أي رموز سابقة قبل إنشاء رمز جديد
+   */
+  async createPasswordReset(
+    userId: number,
+    code: string,
+    expiresAt: Date
+  ): Promise<any> {
     // حذف أي رموز سابقة للمستخدم قبل إنشاء رمز جديد
     await db.execute(
       sql`DELETE FROM password_resets WHERE user_id = ${userId} AND used = FALSE`
     );
-    
+
     const result = await db.execute(
       sql`INSERT INTO password_resets (user_id, code, expires_at, created_at, used) 
           VALUES (${userId}, ${code}, ${expiresAt}, NOW(), FALSE) 
@@ -245,7 +318,9 @@ async clearLoginAttempts(username: string, ipAddress: string): Promise<void> {
     return result.rows[0];
   }
 
-  // البحث عن رمز إعادة التعيين (غير مستخدم وغير منتهي الصلاحية)
+  /**
+   * البحث عن رمز إعادة التعيين (غير مستخدم وغير منتهي الصلاحية)
+   */
   async getPasswordResetByCode(code: string): Promise<any> {
     const result = await db.execute(
       sql`SELECT * FROM password_resets 
@@ -256,20 +331,26 @@ async clearLoginAttempts(username: string, ipAddress: string): Promise<void> {
     return result.rows[0];
   }
 
-  // تعليم الرمز كمستخدم
+  /**
+   * تعليم الرمز كمستخدم
+   */
   async markResetCodeAsUsed(code: string): Promise<void> {
     await db.execute(
       sql`UPDATE password_resets SET used = TRUE WHERE code = ${code}`
     );
   }
 
-  // تحديث كلمة مرور المستخدم
-  async updateUserPassword(userId: number, hashedPassword: string): Promise<void> {
+  /**
+   * تحديث كلمة مرور المستخدم
+   */
+  async updateUserPassword(
+    userId: number,
+    hashedPassword: string
+  ): Promise<void> {
     await db.execute(
       sql`UPDATE users SET password = ${hashedPassword} WHERE id = ${userId}`
     );
   }
 }
-
 
 export const storage = new DatabaseStorage();
