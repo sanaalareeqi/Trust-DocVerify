@@ -121,7 +121,7 @@ export default function SignDocument() {
       setIsLoadingUsers(true);
       try {
         const token = localStorage.getItem("token");
-        const response = await fetch("http://localhost:3000/api/documents/users", {
+        const response = await fetch("/api/documents/users", {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (response.ok) {
@@ -315,7 +315,7 @@ const handleConfirmSubmit = async () => {
       };
     }
     
-    const response = await fetch("http://localhost:3000/api/documents", {
+    const response = await fetch("/api/documents", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

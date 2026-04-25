@@ -161,7 +161,7 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     const fetchUsers = async () => {
       try {
         const token = localStorage.getItem("token");
-        const response = await fetch("http://localhost:3000/api/documents/users", {
+        const response = await fetch("/api/documents/users", {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (response.ok) {
@@ -185,7 +185,7 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
       const token = localStorage.getItem("token");
       // ✅ إضافة timestamp لمنع التخزين المؤقت
       const timestamp = Date.now();
-      const response = await fetch(`http://localhost:3000/api/documents?_=${timestamp}`, {
+      const response = await fetch(`/api/documents?_=${timestamp}`, {
         headers: { 
           "Authorization": `Bearer ${token}`,
           "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -307,7 +307,7 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
       const user = JSON.parse(userStr || "{}");
       const token = localStorage.getItem("token");
       
-      const response = await fetch(`http://localhost:3000/api/documents/${docId}/sign`, {
+      const response = await fetch(`/api/documents/${docId}/sign`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -342,7 +342,7 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
       const user = JSON.parse(userStr || "{}");
       const token = localStorage.getItem("token");
       
-      const response = await fetch(`http://localhost:3000/api/documents/${returnModal.docId}/return`, {
+      const response = await fetch(`/api/documents/${returnModal.docId}/return`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -374,7 +374,7 @@ export default function RoleDashboard({ params }: { params: { role: string } }) 
     setBlockchainLoading(docId);
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`http://localhost:3000/api/documents/${docId}/register-on-chain`, {
+      const response = await fetch(`/api/documents/${docId}/register-on-chain`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -57,17 +57,17 @@ export default function Verify() {
     try {
       const token = localStorage.getItem("token");
       
-      const docResponse = await fetch(`http://localhost:3000/api/documents/${id}`, {
+      const docResponse = await fetch(`/api/documents/${id}`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const docData = await docResponse.json();
       
-      const verifyResponse = await fetch(`http://localhost:3000/api/documents/${id}/verify-signature`, {
+      const verifyResponse = await fetch(`/api/documents/${id}/verify-signature`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const verifyData = await verifyResponse.json();
       
-      const logsResponse = await fetch(`http://localhost:3000/api/documents/${id}/signatures`, {
+      const logsResponse = await fetch(`/api/documents/${id}/signatures`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       
@@ -113,7 +113,7 @@ export default function Verify() {
       
       const token = localStorage.getItem("token");
       
-      const response = await fetch(`http://localhost:3000/api/documents/by-hash/${fileHash}`, {
+      const response = await fetch(`/api/documents/by-hash/${fileHash}`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       

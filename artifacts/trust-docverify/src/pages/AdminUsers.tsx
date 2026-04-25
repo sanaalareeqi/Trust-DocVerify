@@ -74,7 +74,7 @@ export default function AdminUsers() {
     setIsLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch("http://localhost:3000/api/documents/users", {
+      const response = await fetch("/api/documents/users", {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (response.ok) {
@@ -105,7 +105,7 @@ export default function AdminUsers() {
     
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch("http://localhost:3000/api/auth/register", {
+      const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({
@@ -135,7 +135,7 @@ export default function AdminUsers() {
     if (!changePasswordDialog.userId) return;
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`http://localhost:3000/api/auth/change-password`, {
+      const response = await fetch(`/api/auth/change-password`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ userId: changePasswordDialog.userId, newPassword: newPassword })
@@ -159,7 +159,7 @@ export default function AdminUsers() {
     
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`http://localhost:3000/api/documents/users/${userId}`, {
+      const response = await fetch(`/api/documents/users/${userId}`, {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -196,7 +196,7 @@ export default function AdminUsers() {
       const newStatus = !currentIsActive;
       
       // 1. تحديث في السيرفر
-      const response = await fetch(`http://localhost:3000/api/documents/users/${userId}/toggle-suspend`, {
+      const response = await fetch(`/api/documents/users/${userId}/toggle-suspend`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ is_active: newStatus })

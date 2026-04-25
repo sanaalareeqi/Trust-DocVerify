@@ -72,7 +72,7 @@ export default function Reports() {
         const token = localStorage.getItem("token");
         
         // جلب المستخدمين
-        const usersRes = await fetch("http://localhost:3000/api/documents/users", {
+        const usersRes = await fetch("/api/documents/users", {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (usersRes.ok) {
@@ -81,7 +81,7 @@ export default function Reports() {
         }
         
         // جلب الوثائق
-        const docsRes = await fetch("http://localhost:3000/api/documents", {
+        const docsRes = await fetch("/api/documents", {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (docsRes.ok) {

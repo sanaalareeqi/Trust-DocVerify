@@ -50,7 +50,7 @@ export default function NotificationBell() {
   const { data: notifications = [], isLoading, refetch } = useQuery({
     queryKey: ['/api/notifications'],
     queryFn: async () => {
-      const response = await fetch("http://localhost:3000/api/notifications", {
+      const response = await fetch("/api/notifications", {
         headers: {
           "Authorization": `Bearer ${localStorage.getItem("token")}`,
         },
@@ -64,7 +64,7 @@ export default function NotificationBell() {
   // تحديث حالة الإشعار كمقروء
   const markAsReadMutation = useMutation({
     mutationFn: async (notificationId: number) => {
-      const response = await fetch(`http://localhost:3000/api/notifications/${notificationId}/read`, {
+      const response = await fetch(`/api/notifications/${notificationId}/read`, {
         method: "PATCH",
         headers: {
           "Authorization": `Bearer ${localStorage.getItem("token")}`,

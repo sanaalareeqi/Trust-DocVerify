@@ -19,7 +19,7 @@ export default function ExternalSign() {
     const fetchInvitation = async () => {
       try {
         // ✅ تصحيح المسار: إضافة /api/documents
-        const response = await fetch(`http://localhost:3000/api/documents/external/invitation/${token}`);
+        const response = await fetch(`/api/documents/external/invitation/${token}`);
         const data = await response.json();
         
         console.log("API Response:", data); // للتتبع
@@ -46,7 +46,7 @@ export default function ExternalSign() {
     setSigning(true);
     try {
       // ✅ تصحيح المسار: إضافة /api/documents
-      const response = await fetch(`http://localhost:3000/api/documents/external/sign/${token}`, {
+      const response = await fetch(`/api/documents/external/sign/${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
