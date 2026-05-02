@@ -1,13 +1,13 @@
 import Navbar from "@/components/layout/Navbar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { CheckCircle, FileText, Lock, Shield } from "lucide-react";
+import { CheckCircle, FileText, Lock, Shield, GraduationCap } from "lucide-react";
 import { Link } from "wouter";
 import heroImage from "@assets/generated_images/abstract_blue_and_white_digital_security_blockchain_background.png";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-background font-sans">
+    <div className="min-h-screen bg-background font-sans" dir="rtl">
       <Navbar />
 
       {/* Hero Section */}
@@ -21,13 +21,21 @@ export default function Home() {
               <p className="text-xl text-muted-foreground leading-relaxed max-w-2xl ms-auto">
                 نظام TrustDoc يوفر بيئة آمنة للتحقق من الشهادات، العقود، والفواتير باستخدام تقنية البلوك تشين والتوقيع الرقمي المعتمد.
               </p>
+              
+              {/* ✅ مجموعة الأزرار - زر إنشاء طلب شهادة وزر التحقق */}
               <div className="flex flex-wrap gap-4 justify-end">
-                <Link href="/verify">
-                  <Button size="lg" className="text-lg px-8 h-14 font-bold rounded-xl shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all">
-                    تحقق من وثيقة الآن
+                <Link href="/student-request">
+                  <Button size="lg" className="text-lg px-8 h-14 font-bold rounded-xl shadow-lg shadow-blue-600/20 bg-blue-600 hover:bg-blue-700 text-white transition-all">
+                    <GraduationCap className="h-5 w-5 ml-2" />
+                    إنشاء طلب شهادة
                   </Button>
                 </Link>
-                {/* ✅ تم حذف زر "استعراض الخدمات" */}
+                <Link href="/verify">
+                  <Button size="lg" variant="outline" className="text-lg px-8 h-14 font-bold rounded-xl border-primary/30 hover:bg-primary/5 transition-all">
+                    <FileText className="h-5 w-5 ml-2" />
+                    تحقق من وثيقة
+                  </Button>
+                </Link>
               </div>
               
               <div className="pt-8 flex items-center justify-end gap-6 text-sm text-muted-foreground">
@@ -38,6 +46,10 @@ export default function Home() {
                 <div className="flex items-center gap-2">
                   <CheckCircle className="h-5 w-5 text-green-500" />
                   <span>معتمد قانونياً</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-5 w-5 text-green-500" />
+                  <span>موثق بـ Blockchain</span>
                 </div>
               </div>
             </div>
@@ -69,17 +81,20 @@ export default function Home() {
               {
                 icon: FileText,
                 title: "الشهادات الجامعية",
-                desc: "توثيق الشهادات الأكاديمية وحمايتها من التزوير لتسهيل عملية التحقق للمؤسسات والشركات."
+                desc: "توثيق الشهادات الأكاديمية وحمايتها من التزوير لتسهيل عملية التحقق للمؤسسات والشركات.",
+                action: "طلب شهادة جديدة"
               },
               {
                 icon: Shield,
                 title: "العقود والاتفاقيات",
-                desc: "توقيع وحفظ العقود رقمياً مع ضمان عدم القابلية للتعديل بعد التوقيع وحفظ السجل الزمني."
+                desc: "توقيع وحفظ العقود رقمياً مع ضمان عدم القابلية للتعديل بعد التوقيع وحفظ السجل الزمني.",
+                action: "إنشاء عقد"
               },
               {
                 icon: Lock,
                 title: "الفواتير والإيصالات",
-                desc: "إصدار فواتير موثقة تمنع التلاعب المالي وتضمن حقوق البائع والمشتري بشكل فوري."
+                desc: "إصدار فواتير موثقة تمنع التلاعب المالي وتضمن حقوق البائع والمشتري بشكل فوري.",
+                action: "إنشاء فاتورة"
               }
             ].map((feature, i) => (
               <Card key={i} className="group hover:shadow-xl transition-all duration-300 border-primary/10 hover:border-primary/30 bg-background/50 backdrop-blur">
@@ -91,6 +106,13 @@ export default function Home() {
                   <p className="text-muted-foreground leading-relaxed">
                     {feature.desc}
                   </p>
+                  {i === 0 && (
+                    <Link href="/student-request">
+                      <Button variant="link" className="text-primary gap-1 px-0">
+                        {feature.action} ←
+                      </Button>
+                    </Link>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -98,7 +120,42 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ✅ تم حذف قسم CTA Section بالكامل (ابدأ بتأمين مستنداتك - أنشئ حساب مجاني) */}
+      {/* ✅ قسم إضافي: كيف تبدأ؟ */}
+      <section className="py-24">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl lg:text-4xl font-bold text-foreground mb-4">كيف تبدأ؟</h2>
+            <p className="text-muted-foreground text-lg">ثلاث خطوات بسيطة للحصول على وثيقتك الموثقة</p>
+          </div>
+          
+          <div className="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">
+            <div className="text-center space-y-3">
+              <div className="h-16 w-16 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold mx-auto">1</div>
+              <h3 className="text-xl font-bold">قدّم طلبك</h3>
+              <p className="text-muted-foreground">املأ بياناتك في نموذج طلب الشهادة</p>
+            </div>
+            <div className="text-center space-y-3">
+              <div className="h-16 w-16 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold mx-auto">2</div>
+              <h3 className="text-xl font-bold">مراجعة البيانات</h3>
+              <p className="text-muted-foreground">يتولى فريقنا مراجعة بياناتك والتحقق منها</p>
+            </div>
+            <div className="text-center space-y-3">
+              <div className="h-16 w-16 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold mx-auto">3</div>
+              <h3 className="text-xl font-bold">استلام الشهادة</h3>
+              <p className="text-muted-foreground">تصدر الشهادة وتوقّع رقمياً وتصل إلى حسابك</p>
+            </div>
+          </div>
+          
+          <div className="text-center mt-12">
+            <Link href="/student-request">
+              <Button size="lg" className="gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8">
+                <GraduationCap className="h-5 w-5" />
+                ابدأ الآن - إنشاء طلب شهادة
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

@@ -38,21 +38,115 @@ export interface IStorage {
   updateExternalInvitationStatus(token: string, status: string, signerIp: string): Promise<any>;
   // دوال السجل الأمني
   createSecurityLog(log: any): Promise<any>;
-  // ✅ دوال استعادة كلمة المرور (Forgot Password)
+  // دوال استعادة كلمة المرور
   createPasswordReset(userId: number, code: string, expiresAt: Date): Promise<any>;
   getPasswordResetByCode(code: string): Promise<any>;
   markResetCodeAsUsed(code: string): Promise<void>;
   updateUserPassword(userId: number, hashedPassword: string): Promise<void>;
-  // ✅ دوال حماية من هجمات القوة الغاشمة (Brute Force Protection)
+  // دوال حماية من هجمات القوة الغاشمة
   logLoginAttempt(username: string, ipAddress: string, success: boolean): Promise<void>;
   getFailedLoginCount(username: string): Promise<number>;
   clearLoginAttempts(username: string): Promise<void>;
+  getLastVerifiedDocument(): Promise<any | null>;
+  
+  // ✅ دوال إدارة مسارات التوقيع (Workflows)
+  getAllWorkflows(): Promise<any[]>;
+  getActiveWorkflow(): Promise<any | null>;
+  createWorkflow(data: { name: string; workflow: any[] }): Promise<any>;
+  updateWorkflow(id: number, data: { name?: string; workflow?: any[] }): Promise<any>;
+  activateWorkflow(id: number): Promise<any>;
+  deleteWorkflow(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
+  }
+
+  // ✅ الحصول على جميع مسارات التوقيع
+  async getAllWorkflows(): Promise<any[]> {
+    try {
+      const result = await db.execute(sql`SELECT * FROM workflows ORDER BY id DESC`);
+      return result.rows || [];
+    } catch (error) {
+      console.error("Error getting all workflows:", error);
+      return [];
+    }
+  }
+
+  // ✅ الحصول على المسار النشط
+  async getActiveWorkflow(): Promise<any | null> {
+    try {
+      const result = await db.execute(sql`SELECT * FROM workflows WHERE is_active = TRUE LIMIT 1`);
+      return result.rows[0] || null;
+    } catch (error) {
+      console.error("Error getting active workflow:", error);
+      return null;
+    }
+  }
+
+  // ✅ إنشاء مسار توقيع جديد
+  async createWorkflow(data: { name: string; workflow: any[] }): Promise<any> {
+    try {
+      const result = await db.execute(
+        sql`INSERT INTO workflows (name, workflow, created_at, updated_at) 
+            VALUES (${data.name}, ${JSON.stringify(data.workflow)}, NOW(), NOW()) 
+            RETURNING *`
+      );
+      return result.rows[0];
+    } catch (error) {
+      console.error("Error creating workflow:", error);
+      throw error;
+    }
+  }
+
+  // ✅ تحديث مسار توقيع
+  async updateWorkflow(id: number, data: { name?: string; workflow?: any[] }): Promise<any> {
+    try {
+      let updateFields: Record<string, any> = { updated_at: new Date() };
+      
+      if (data.name) {
+        updateFields.name = data.name;
+      }
+      if (data.workflow) {
+        updateFields.workflow = JSON.stringify(data.workflow);
+      }
+
+      const result = await db.execute(
+        sql`UPDATE workflows SET ${Object.entries(updateFields)
+          .map(([key, value]) => `${key} = ${typeof value === 'string' ? `'${value}'` : value}`)
+          .join(', ')} WHERE id = ${id} RETURNING *`
+      );
+      return result.rows[0];
+    } catch (error) {
+      console.error("Error updating workflow:", error);
+      throw error;
+    }
+  }
+
+  // ✅ تفعيل مسار توقيع
+  async activateWorkflow(id: number): Promise<any> {
+    try {
+      await db.execute(sql`UPDATE workflows SET is_active = FALSE`);
+      const result = await db.execute(
+        sql`UPDATE workflows SET is_active = TRUE WHERE id = ${id} RETURNING *`
+      );
+      return result.rows[0];
+    } catch (error) {
+      console.error("Error activating workflow:", error);
+      throw error;
+    }
+  }
+
+  // ✅ حذف مسار توقيع
+  async deleteWorkflow(id: number): Promise<void> {
+    try {
+      await db.execute(sql`DELETE FROM workflows WHERE id = ${id}`);
+    } catch (error) {
+      console.error("Error deleting workflow:", error);
+      throw error;
+    }
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
@@ -63,7 +157,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  // ✅ البحث عن مستخدم عن طريق البريد الإلكتروني
+  // البحث عن مستخدم عن طريق البريد الإلكتروني
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db
       .select()
@@ -125,10 +219,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getLastVerifiedDocument(): Promise<any | null> {
-    const result = await db.execute(
-      sql`SELECT * FROM documents WHERE status = 'Verified' ORDER BY id DESC LIMIT 1`
-    );
-    return result.rows[0] || null;
+    try {
+      const result = await db.execute(
+        sql`SELECT * FROM documents WHERE status = 'Verified' ORDER BY id DESC LIMIT 1`
+      );
+      return result.rows[0] || null;
+    } catch (error) {
+      console.error("Error getting last verified document:", error);
+      return null;
+    }
   }
 
   async createSignatureLog(log: any): Promise<SignatureLog> {
@@ -167,38 +266,57 @@ export class DatabaseStorage implements IStorage {
       .where(eq(notifications.id, id));
   }
 
-  // ✅ دوال التوقيع الرقمي (باستخدام SQL raw)
+  // دوال التوقيع الرقمي (باستخدام SQL raw)
   async updateUserPublicKey(userId: number, publicKey: string): Promise<User> {
-    const result = await db.execute(
-      sql`UPDATE users SET public_key = ${publicKey}, key_created_at = NOW() WHERE id = ${userId} RETURNING *`
-    );
-    return result.rows[0] as User;
+    try {
+      const result = await db.execute(
+        sql`UPDATE users SET public_key = ${publicKey}, key_created_at = NOW() WHERE id = ${userId} RETURNING *`
+      );
+      return result.rows[0] as User;
+    } catch (error) {
+      console.error("Error updating user public key:", error);
+      throw error;
+    }
   }
 
-  // ✅ بعد
-async getUserPublicKey(userId: number): Promise<string | null> {
-  const result = await db.execute(
-    sql`SELECT public_key FROM users WHERE id = ${userId}`
-  );
-  return (result.rows[0]?.public_key as string) || null;
-}
+  async getUserPublicKey(userId: number): Promise<string | null> {
+    try {
+      const result = await db.execute(
+        sql`SELECT public_key FROM users WHERE id = ${userId}`
+      );
+      const publicKey = result.rows[0]?.public_key;
+      return publicKey ? String(publicKey) : null;
+    } catch (error) {
+      console.error("Error getting user public key:", error);
+      return null;
+    }
+  }
 
-
-  // ✅ دوال التوقيع الخارجي
+  // دوال التوقيع الخارجي
   async createExternalInvitation(invitation: any): Promise<any> {
-    const [newInvitation] = await db
-      .insert(externalSignatureInvitations)
-      .values(invitation)
-      .returning();
-    return newInvitation;
+    try {
+      const [newInvitation] = await db
+        .insert(externalSignatureInvitations)
+        .values(invitation)
+        .returning();
+      return newInvitation;
+    } catch (error) {
+      console.error("Error creating external invitation:", error);
+      throw error;
+    }
   }
 
   async getExternalInvitationByToken(token: string): Promise<any> {
-    const [invitation] = await db
-      .select()
-      .from(externalSignatureInvitations)
-      .where(eq(externalSignatureInvitations.uniqueToken, token));
-    return invitation;
+    try {
+      const [invitation] = await db
+        .select()
+        .from(externalSignatureInvitations)
+        .where(eq(externalSignatureInvitations.uniqueToken, token));
+      return invitation;
+    } catch (error) {
+      console.error("Error getting external invitation by token:", error);
+      return null;
+    }
   }
 
   async updateExternalInvitationStatus(
@@ -206,26 +324,31 @@ async getUserPublicKey(userId: number): Promise<string | null> {
     status: string,
     signerIp: string
   ): Promise<any> {
-    const [updated] = await db
-      .update(externalSignatureInvitations)
-      .set({ status, signedAt: new Date(), signerIp })
-      .where(eq(externalSignatureInvitations.uniqueToken, token))
-      .returning();
-    return updated;
+    try {
+      const [updated] = await db
+        .update(externalSignatureInvitations)
+        .set({ status, signedAt: new Date(), signerIp })
+        .where(eq(externalSignatureInvitations.uniqueToken, token))
+        .returning();
+      return updated;
+    } catch (error) {
+      console.error("Error updating external invitation status:", error);
+      throw error;
+    }
   }
 
-  // ✅ دوال السجل الأمني
+  // دوال السجل الأمني
   async createSecurityLog(log: any): Promise<any> {
-    const [newLog] = await db.insert(securityLogs).values(log).returning();
-    return newLog;
+    try {
+      const [newLog] = await db.insert(securityLogs).values(log).returning();
+      return newLog;
+    } catch (error) {
+      console.error("Error creating security log:", error);
+      throw error;
+    }
   }
 
-  // ✅✅✅ دوال حماية من هجمات القوة الغاشمة (Brute Force Protection) ✅✅✅
-
-  /**
-   * ✅ تسجيل محاولة تسجيل دخول (ناجحة أو فاشلة)
-   * يتم تسجيل username و IP معاً للتتبع الكامل
-   */
+  // دوال حماية من هجمات القوة الغاشمة (Brute Force Protection)
   async logLoginAttempt(
     username: string,
     ipAddress: string,
@@ -241,35 +364,17 @@ async getUserPublicKey(userId: number): Promise<string | null> {
     }
   }
 
-  /**
-   * ✅ التحقق من عدد المحاولات الفاشلة
-   * 🔧 تم التعديل: البحث بـ username فقط (بدون IP)
-   * هذا يضمن حظر المستخدم المحدد بغض النظر عن IP
-   */
   async getFailedLoginCount(username: string): Promise<number> {
     try {
-      // ✅ نبحث بـ username فقط (بدون IP)
       const result = await db.execute(
         sql`SELECT COUNT(*) as count FROM login_attempts 
             WHERE username = ${username} 
             AND success = FALSE 
             AND attempted_at > NOW() - INTERVAL '15 minutes'`
       );
-
-      // 🔧 Debugging
-      console.log(
-        `🔍 Raw result for ${username}:`,
-        JSON.stringify(result.rows[0])
-      );
-
-      // ✅ استخراج القيمة بشكل صحيح
-      // ✅ بعد
-const countValue = result.rows[0]?.count as string | undefined;
-const failedCount = parseInt(countValue || '0', 10);
-
-
+      const countValue = result.rows[0]?.count as string | undefined;
+      const failedCount = parseInt(countValue || '0', 10);
       console.log(`📊 ${username}: ${failedCount} failed attempts`);
-
       return failedCount;
     } catch (error) {
       console.error("Error getting failed login count:", error);
@@ -277,79 +382,77 @@ const failedCount = parseInt(countValue || '0', 10);
     }
   }
 
-  /**
-   * ✅ مسح محاولات تسجيل دخول فاشلة بعد تسجيل الدخول الناجح
-   * 🔧 تم التعديل: مسح محاولات username فقط (بدون IP)
-   */
   async clearLoginAttempts(username: string): Promise<void> {
     try {
-      // ✅ نمسح جميع محاولات المستخدم المحدد
       await db.execute(
         sql`DELETE FROM login_attempts WHERE username = ${username}`
       );
-
       console.log(`🗑️ Cleared all login attempts for ${username}`);
     } catch (error) {
       console.error("Error clearing login attempts:", error);
     }
   }
 
-  // ✅✅✅ دوال استعادة كلمة المرور (Forgot Password) ✅✅✅
-
-  /**
-   * إنشاء رمز إعادة تعيين كلمة المرور
-   * يتم حذف أي رموز سابقة قبل إنشاء رمز جديد
-   */
+  // دوال استعادة كلمة المرور (Forgot Password)
   async createPasswordReset(
     userId: number,
     code: string,
     expiresAt: Date
   ): Promise<any> {
-    // حذف أي رموز سابقة للمستخدم قبل إنشاء رمز جديد
-    await db.execute(
-      sql`DELETE FROM password_resets WHERE user_id = ${userId} AND used = FALSE`
-    );
+    try {
+      await db.execute(
+        sql`DELETE FROM password_resets WHERE user_id = ${userId} AND used = FALSE`
+      );
 
-    const result = await db.execute(
-      sql`INSERT INTO password_resets (user_id, code, expires_at, created_at, used) 
-          VALUES (${userId}, ${code}, ${expiresAt}, NOW(), FALSE) 
-          RETURNING *`
-    );
-    return result.rows[0];
+      const result = await db.execute(
+        sql`INSERT INTO password_resets (user_id, code, expires_at, created_at, used) 
+            VALUES (${userId}, ${code}, ${expiresAt}, NOW(), FALSE) 
+            RETURNING *`
+      );
+      return result.rows[0];
+    } catch (error) {
+      console.error("Error creating password reset:", error);
+      throw error;
+    }
   }
 
-  /**
-   * البحث عن رمز إعادة التعيين (غير مستخدم وغير منتهي الصلاحية)
-   */
   async getPasswordResetByCode(code: string): Promise<any> {
-    const result = await db.execute(
-      sql`SELECT * FROM password_resets 
-          WHERE code = ${code} 
-          AND expires_at > NOW() 
-          AND used = FALSE`
-    );
-    return result.rows[0];
+    try {
+      const result = await db.execute(
+        sql`SELECT * FROM password_resets 
+            WHERE code = ${code} 
+            AND expires_at > NOW() 
+            AND used = FALSE`
+      );
+      return result.rows[0];
+    } catch (error) {
+      console.error("Error getting password reset by code:", error);
+      return null;
+    }
   }
 
-  /**
-   * تعليم الرمز كمستخدم
-   */
   async markResetCodeAsUsed(code: string): Promise<void> {
-    await db.execute(
-      sql`UPDATE password_resets SET used = TRUE WHERE code = ${code}`
-    );
+    try {
+      await db.execute(
+        sql`UPDATE password_resets SET used = TRUE WHERE code = ${code}`
+      );
+    } catch (error) {
+      console.error("Error marking reset code as used:", error);
+    }
   }
 
-  /**
-   * تحديث كلمة مرور المستخدم
-   */
   async updateUserPassword(
     userId: number,
     hashedPassword: string
   ): Promise<void> {
-    await db.execute(
-      sql`UPDATE users SET password = ${hashedPassword} WHERE id = ${userId}`
-    );
+    try {
+      await db.execute(
+        sql`UPDATE users SET password = ${hashedPassword} WHERE id = ${userId}`
+      );
+    } catch (error) {
+      console.error("Error updating user password:", error);
+      throw error;
+    }
   }
 }
 

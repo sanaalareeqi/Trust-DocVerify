@@ -1,13 +1,15 @@
 import express, { type Express } from "express";
 import cors from "cors";
-import helmet from "helmet";  // ✅ أضيفي هذا السطر
+import helmet from "helmet";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import workflowsRouter from "./routes/workflows";
+import certificateRequestsRouter from "./routes/certificateRequests"; // ✅ أضيفي هذا السطر
 import { logger } from "./lib/logger";
 
 const app: Express = express();
 
-// ✅ حماية من XSS والثغرات الأمنية (أضيفي هذا القسم)
+// ✅ حماية من XSS والثغرات الأمنية
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -18,8 +20,8 @@ app.use(helmet({
       connectSrc: ["'self'", "http://localhost:3000", "http://localhost:5173", "https://*.alchemy.com", "https://*.etherscan.io"],
     },
   },
-  xssFilter: true,      // منع XSS
-  noSniff: true,        // منع تنفيذ الملفات الخبيثة
+  xssFilter: true,
+  noSniff: true,
 }));
 
 app.use(
@@ -52,5 +54,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+app.use("/api/workflows", workflowsRouter);
+app.use("/api", certificateRequestsRouter); // ✅ أضيفي هذا السطر
 
 export default app;

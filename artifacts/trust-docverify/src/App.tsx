@@ -17,6 +17,9 @@ import AdminUsers from "@/pages/AdminUsers";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import { ReactNode, useEffect, useState } from "react";
+import StudentRequest from "./pages/StudentRequest";
+import GraduateAffairs from "./pages/GraduateAffairs";
+import certificateRequestsRouter from "./routes/certificateRequests";
 
 // ✅ مكون حماية المسارات
 function ProtectedRoute({ children, allowedRoles }: { children: ReactNode; allowedRoles?: string[] }) {
@@ -138,7 +141,8 @@ function Router() {
       <Route path="/register" component={Register} />
       <Route path="/verify" component={Verify} />
       <Route path="/verify/:id" component={Verify} />
-      
+      <Route path="/student-request" component={StudentRequest} />
+<Route path="/graduate-affairs" component={GraduateAffairs} />
       {/* ✅ صفحات استعادة كلمة المرور (بدون حماية) */}
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />

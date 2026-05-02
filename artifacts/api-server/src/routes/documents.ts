@@ -16,9 +16,10 @@ import {
 import { addQRCodeToImage, addQRCodeToPDF } from "../services/qr.service";
 import * as fs from 'fs';
 import * as path from 'path';
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken"; // ✅ ✅ ✅ أضيفي هذا السطر
 
 const router: IRouter = Router();
-
 const ROLE_LABELS: Record<string, string> = {
   // أدوار الشهادات (5 أدوار)
   "Graduate-Affairs": "شؤون الخريجين",
@@ -75,6 +76,92 @@ router.post("/users", async (req, res) => {
   } catch (err) {
     console.error("Error creating user:", err);
     res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+
+// ✅✅✅ Endpoint تعديل المستخدم - النسخة المصححة ✅✅✅
+router.put("/users/:id", async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const { name, role, password } = req.body;
+    
+    console.log("📝 Updating user:", userId, { name, role, password: password ? "***" : undefined });
+    
+    // ✅ التحقق من وجود المستخدم
+    const existingUser = await storage.getUser(userId);
+    
+    if (!existingUser) {
+      return res.status(404).json({ error: "المستخدم غير موجود" });
+    }
+    
+    // منع تعديل مدير النظام
+    if (existingUser.role === 'مدير النظام') {
+      return res.status(403).json({ error: "لا يمكن تعديل بيانات مدير النظام" });
+    }
+    
+    // ✅ بناء البيانات المراد تحديثها
+    const updateData: Record<string, any> = {
+      updated_at: new Date(),
+    };
+    
+    // تحديث الاسم
+    if (name && typeof name === 'string' && name.trim()) {
+      updateData.name = name.trim();
+      updateData.username = name.trim();
+    }
+    
+    // تحديث الدور
+    if (role && typeof role === 'string' && role.trim()) {
+      const validRoles = [
+        "شؤون الخريجين", "مسجل الكلية", "عميد الكلية", "المسجل العام", "رئيس الجامعة",
+        "مسؤول التوظيف", "الأمين العام", "رئيس مجلس الأمناء", "ممثل جهة خارجية",
+        "مقدم طلب الشراء", "المدير المالي", "المراجع", "الحسابات"
+      ];
+      
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: `الدور "${role}" غير صالح` });
+      }
+      updateData.role = role;
+    }
+    
+    // تحديث كلمة المرور
+    if (password && typeof password === 'string' && password.trim()) {
+      if (password.length < 6) {
+        return res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" });
+      }
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+    
+    // ✅ التحقق من وجود تحديثات (بخلاف updated_at)
+    if (Object.keys(updateData).length === 1) {
+      return res.status(400).json({ error: "لم يتم إرسال أي بيانات للتحديث" });
+    }
+    
+    console.log("📝 Update data:", updateData);
+    
+    // ✅ تنفيذ التحديث باستخدام Drizzle ORM
+    const [updatedUser] = await db
+      .update(users)
+      .set(updateData)
+      .where(eq(users.id, userId))
+      .returning();
+    
+    if (!updatedUser) {
+      return res.status(404).json({ error: "فشل في تحديث المستخدم" });
+    }
+    
+    console.log("✅ User updated successfully:", updatedUser);
+    
+    res.json({
+      success: true,
+      message: "تم تحديث بيانات المستخدم بنجاح",
+      user: updatedUser
+    });
+    
+  } catch (err) {
+    console.error("❌ Error updating user:", err);
+    res.status(500).json({ error: "فشل في تحديث المستخدم: " + (err as Error).message });
   }
 });
 
@@ -162,7 +249,7 @@ router.put("/users/:id/toggle-suspend", async (req, res) => {
   }
 });
 
-// Documents - مسارات معدلة (بدون تكرار /documents)
+// Documents - مسارات معدلة
 router.get("/", async (req, res) => {
   try {
     const docs = await storage.getAllDocuments();
@@ -197,7 +284,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// ✅ تحميل الوثيقة مع QR Code (لعرضها أو تنزيلها)
+// ✅ تحميل الوثيقة مع QR Code
 router.get("/:id/download", async (req, res) => {
   try {
     const docId = parseInt(req.params.id);
@@ -207,7 +294,6 @@ router.get("/:id/download", async (req, res) => {
       return res.status(404).json({ error: "الوثيقة غير موجودة" });
     }
     
-    // استخراج البيانات من base64
     const matches = doc.fileUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!matches) {
       return res.status(400).json({ error: "تنسيق ملف غير صالح" });
@@ -217,7 +303,6 @@ router.get("/:id/download", async (req, res) => {
     const base64Data = matches[2];
     const fileBuffer = Buffer.from(base64Data, 'base64');
     
-    // تحديد اسم الملف
     let extension = 'bin';
     if (contentType.includes('pdf')) extension = 'pdf';
     else if (contentType.includes('png')) extension = 'png';
@@ -236,7 +321,7 @@ router.get("/:id/download", async (req, res) => {
   }
 });
 
-// ✅ التحقق من الوثيقة عبر QR Code (API)
+// ✅ التحقق من الوثيقة عبر QR Code
 router.get("/verify/:docId", async (req, res) => {
   try {
     const docId = parseInt(req.params.docId);
@@ -250,10 +335,8 @@ router.get("/verify/:docId", async (req, res) => {
       return res.status(404).json({ error: "الوثيقة غير موجودة" });
     }
     
-    // جلب سلسلة التوقيعات
     const signatures = await storage.getSignatureLogs(docId);
     
-    // جلب معلومات الـ Blockchain إن وجدت
     let blockchainInfo = null;
     if (doc.blockchainTxUrl) {
       blockchainInfo = {
@@ -263,7 +346,6 @@ router.get("/verify/:docId", async (req, res) => {
       };
     }
     
-    // تنسيق سلسلة التوقيعات للعرض
     const formattedSignatures = signatures.map((sig: any) => ({
       role: ROLE_LABELS[sig.signerRole] || sig.signerRole,
       action: sig.action === "signed" ? "✅ وقع" : "↩️ أعاد",
@@ -296,7 +378,7 @@ router.get("/verify/:docId", async (req, res) => {
   }
 });
 
-// ✅ إضافة QR Code إلى الوثيقة (يدوي)
+// ✅ إضافة QR Code إلى الوثيقة
 router.post("/:id/add-qr", async (req, res) => {
   try {
     const docId = parseInt(req.params.id);
@@ -340,7 +422,6 @@ router.post("/", async (req, res) => {
     if (!title || !type || !creatorId || !workflow)
       return res.status(400).json({ error: "Missing required fields" });
     
-    // ✅ فحص أمان الملف (إذا كان هناك ملف حقيقي)
     let securityCheckPassed = true;
     let securityError = null;
     
@@ -391,14 +472,12 @@ router.post("/", async (req, res) => {
     console.log("🚀 Document saved to database, ID:", doc.id);
     console.log("1️⃣ Document hash:", documentHash);
     
-    // ✅ الحصول على آخر هاش مسجل (لربط السلسلة)
     const lastDocument = await storage.getAllDocuments().then(docs => 
-  docs.filter(d => d.status === 'Verified').sort((a, b) => b.id - a.id)[0]
-);
+      docs.filter(d => d.status === 'Verified').sort((a, b) => b.id - a.id)[0]
+    );
     const previousHash = lastDocument?.documentHash || "";
     console.log("2️⃣ Previous hash:", previousHash ? previousHash.substring(0, 32) + "..." : "(أول وثيقة)");
     
-    // ✅ تسجيل الهاش على Blockchain مع الربط بالسابق (خلفية)
     if (documentHash) {
       setImmediate(async () => {
         try {
@@ -415,7 +494,6 @@ router.post("/", async (req, res) => {
       });
     }
     
-    // ✅ إذا كان هناك طرف خارجي، إنشاء دعوة توقيع وإرسال بريد إلكتروني
     if (externalInvitation && externalInvitation.email) {
       const token = uuidv4();
       const expiresAt = new Date();
@@ -439,7 +517,6 @@ router.post("/", async (req, res) => {
       }
     }
     
-    // ✅ إضافة QR Code إلى الوثيقة
     try {
       if (fileUrl && fileUrl !== "temp.pdf" && fileUrl.startsWith('data:')) {
         console.log(`📱 Adding QR code to document ${doc.id}...`);
@@ -532,23 +609,19 @@ router.post("/:id/sign", async (req, res) => {
     
     logger.info({ docId, signerRole, newStatus }, `Document signed: step ${currentStepValue} -> ${newStep}`);
     
-    // ✅✅✅ التسجيل التلقائي على Blockchain عند اكتمال الوثيقة ✅✅✅
     if (newStatus === "Verified" && doc.documentHash) {
       console.log("🚀 Starting auto-registration for document:", docId);
       console.log("📝 Document hash:", doc.documentHash);
       
       setImmediate(async () => {
         try {
-          // الحصول على آخر هاش مسجل (لربط السلسلة)
           const lastDocument = await storage.getLastVerifiedDocument();
           const previousHash = lastDocument?.documentHash || "";
           console.log("🔗 Previous hash:", previousHash || "(first document)");
           
-          // تسجيل الهاش مع الربط بالسابق
           const { docId: blockchainDocId, txUrl } = await addDocumentHashToChain(doc.documentHash, previousHash);
           console.log("✅ Blockchain registration result:", { blockchainDocId, txUrl });
           
-          // تحديث الوثيقة بمعلومات Blockchain
           const updateResult = await storage.updateDocument(docId, {
             blockchain_doc_id: blockchainDocId,
             blockchain_tx_url: txUrl,
@@ -571,7 +644,8 @@ router.post("/:id/sign", async (req, res) => {
     res.status(500).json({ error: "Failed to sign document: " + (err as Error).message });
   }
 });
-// ✅ دالة الإعادة المعدلة (للمسجل العام فقط)
+
+// ✅ دالة الإعادة المعدلة
 router.post("/:id/return", async (req, res) => {
   try {
     const docId = parseInt(req.params.id);
@@ -853,5 +927,169 @@ router.put("/notifications/:id/read", async (req, res) => {
     res.status(500).json({ error: "Failed to update notification" });
   }
 });
+// ============== إدارة طلبات الشهادات ==============
+// ============== إدارة طلبات الشهادات ==============
 
+// ============== إدارة طلبات الشهادات ==============
+
+// إنشاء طلب جديد (للطالب)
+router.post("/certificate-requests", async (req: any, res: any) => {
+  try {
+    const {
+      student_name_ar, student_name_en,
+      nationality_ar, nationality_en,
+      birthplace_ar, birthplace_en,
+      birth_year,
+      college_ar, college_en,
+    } = req.body;
+
+    console.log("📝 استلام طلب شهادة جديد:", { student_name_ar });
+
+    // ✅ حفظ الطلب في قاعدة البيانات
+    const result = await db.execute(`
+      INSERT INTO certificate_requests (
+        student_name_ar, student_name_en,
+        nationality_ar, nationality_en,
+        birthplace_ar, birthplace_en,
+        birth_year,
+        college_ar, college_en, 
+        student_id, status
+      ) VALUES (
+        '${student_name_ar.replace(/'/g, "''")}', 
+        '${student_name_en.replace(/'/g, "''")}',
+        '${nationality_ar.replace(/'/g, "''")}', 
+        '${nationality_en.replace(/'/g, "''")}',
+        '${birthplace_ar.replace(/'/g, "''")}', 
+        '${birthplace_en.replace(/'/g, "''")}',
+        ${birth_year},
+        '${college_ar.replace(/'/g, "''")}', 
+        '${college_en.replace(/'/g, "''")}', 
+        NULL, 'pending'
+      )
+      RETURNING *
+    `);
+
+    // ✅✅✅ إرسال إشعار إلى شؤون الخريجين (هذا الكود موجود هنا) ✅✅✅
+    await db.execute(`
+      INSERT INTO notifications (recipient_id, message, created_at)
+      SELECT id, '📋 طلب شهادة جديد من الطالب: ${student_name_ar.replace(/'/g, "''")}', NOW() 
+      FROM users WHERE role = 'شؤون الخريجين'
+    `);
+
+    console.log("✅ تم حفظ الطلب وإرسال الإشعار بنجاح");
+
+    res.json({ 
+      success: true, 
+      message: "تم إرسال طلب الشهادة بنجاح",
+      requestId: result.rows[0].id 
+    });
+    
+  } catch (err: any) {
+    console.error("❌ خطأ:", err);
+    res.status(500).json({ error: "فشل في إنشاء الطلب: " + err.message });
+  }
+});
+
+// ✅ تسجيل وثيقة على Blockchain (يدوي)
+// ✅ تسجيل وثيقة على Blockchain (يدوي) - نسخة مع تصحيح الأخطاء
+router.post("/:id/register-on-chain", async (req, res) => {
+  try {
+    const docId = parseInt(req.params.id);
+    console.log("========================================");
+    console.log("🔗 بدء تسجيل وثيقة على Blockchain");
+    console.log("📄 Document ID:", docId);
+    
+    // 1. جلب الوثيقة من قاعدة البيانات
+    const doc = await storage.getDocument(docId);
+    if (!doc) {
+      console.log("❌ Document not found");
+      return res.status(404).json({ error: "الوثيقة غير موجودة" });
+    }
+    console.log("✅ Document found:", doc.title);
+    console.log("📊 Document status:", doc.status);
+    console.log("🔑 Document hash:", doc.documentHash);
+    
+    // 2. التحقق من حالة الوثيقة
+    if (doc.status !== "Verified") {
+      console.log("❌ Document not verified yet");
+      return res.status(400).json({ error: "لا يمكن تسجيل الوثيقة إلا بعد اكتمال جميع التوقيعات" });
+    }
+    
+    // 3. التحقق من عدم التسجيل المسبق
+    if (doc.blockchainTxUrl) {
+      console.log("❌ Already registered");
+      return res.status(400).json({ 
+        error: "الوثيقة مسجلة بالفعل على Blockchain", 
+        txUrl: doc.blockchainTxUrl 
+      });
+    }
+    
+    // 4. الحصول على آخر هاش مسجل
+    console.log("🔍 Searching for last registered document...");
+    const allDocs = await storage.getAllDocuments();
+    const lastVerifiedDoc = allDocs
+      .filter(d => d.status === 'Verified' && d.blockchainTxUrl)
+      .sort((a, b) => b.id - a.id)[0];
+    
+    const previousHash = lastVerifiedDoc?.documentHash || "";
+    console.log("🔗 Previous hash:", previousHash || "(first document in chain)");
+    
+    // 5. التحقق من وجود هاش للوثيقة
+    if (!doc.documentHash) {
+      console.log("❌ No document hash found");
+      return res.status(400).json({ error: "الوثيقة لا تحتوي على هاش للتسجيل" });
+    }
+    
+    // 6. محاولة التسجيل على Blockchain
+    console.log("⛓️ Calling addDocumentHashToChain...");
+    console.log("   - Hash:", doc.documentHash);
+    console.log("   - Previous Hash:", previousHash);
+    
+    try {
+      const { docId: blockchainDocId, txUrl } = await addDocumentHashToChain(doc.documentHash, previousHash);
+      
+      console.log("✅ Blockchain registration successful!");
+      console.log("   - Blockchain Doc ID:", blockchainDocId);
+      console.log("   - Transaction URL:", txUrl);
+      
+      // 7. تحديث قاعدة البيانات
+      console.log("💾 Updating database...");
+      await storage.updateDocument(docId, {
+        blockchain_doc_id: blockchainDocId,
+        blockchain_tx_url: txUrl,
+        previous_document_hash: previousHash,
+      });
+      
+      console.log("✅ All done!");
+      console.log("========================================");
+      
+      res.json({
+        success: true,
+        message: "✅ تم تسجيل الوثيقة على Blockchain بنجاح",
+        txUrl: txUrl,
+        blockchainDocId: blockchainDocId
+      });
+      
+    } catch (blockchainError: any) {
+      console.error("❌ Blockchain error:", blockchainError);
+      console.error("❌ Error message:", blockchainError.message);
+      console.error("❌ Error stack:", blockchainError.stack);
+      
+      return res.status(500).json({ 
+        error: "فشل في التسجيل على Blockchain: " + blockchainError.message,
+        details: blockchainError.message
+      });
+    }
+    
+  } catch (err: any) {
+    console.error("❌ General error in register-on-chain:", err);
+    console.error("❌ Error message:", err.message);
+    console.error("❌ Error stack:", err.stack);
+    
+    res.status(500).json({ 
+      error: "فشل في التسجيل على Blockchain: " + err.message,
+      details: err.message
+    });
+  }
+});
 export default router;

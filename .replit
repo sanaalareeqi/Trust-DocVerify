@@ -1,35 +1,18 @@
-modules = ["nodejs-20"]
-[workflow]
-onStart = "cd artifacts/trust-docverify && pnpm run dev -- --host 0.0.0.0"
+modules = ["nodejs-20", "web", "bash", "postgresql-16"]
 
-[[ports]]
-localPort = 5000
-externalPort = 5000
+[[artifacts]]
+id = "artifacts/api-server"
 
-[[ports]]
-localPort = 5001
-externalPort = 3002
+[[artifacts]]
+id = "artifacts/mockup-sandbox"
 
-[[ports]]
-localPort = 5173
-externalPort = 80
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
 
-[[ports]]
-localPort = 5174
-
-[[ports]]
-localPort = 8080
-externalPort = 8080
-
-[[ports]]
-localPort = 8081
-externalPort = 8081
-
-[nix]
-packages = ["nano"]
-
-[agent]
-expertMode = true
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
 
 [workflows]
 runButton = "Project"
@@ -41,23 +24,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "API Server"
+args = "Trust DocVerify App"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Trust DocVerify App"
-
-[[workflows.workflow]]
-name = "API Server"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=8080 pnpm --filter @workspace/api-server run dev"
-waitForPort = 8080
-
-[workflows.workflow.metadata]
-outputType = "console"
+args = "API Server"
 
 [[workflows.workflow]]
 name = "Trust DocVerify App"
@@ -65,8 +36,31 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/trust-docverify run dev"
-waitForPort = 5000
+args = "PORT=25181 BASE_PATH=/ pnpm --filter @workspace/trust-docverify run dev"
+waitForPort = 25181
 
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow]]
+name = "API Server"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=8080 pnpm --filter @workspace/api-server run dev"
+waitForPort = 8080
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[nix]
+channel = "stable-25_05"
